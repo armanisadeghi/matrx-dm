@@ -18,12 +18,18 @@ export async function createDirectConversation(otherUserId: string) {
   });
 
   if (error) {
+    console.error("[createDirectConversation] RPC error:", error);
     return { error: error.message };
+  }
+
+  if (!data) {
+    console.error("[createDirectConversation] RPC returned null");
+    return { error: "Failed to create conversation" };
   }
 
   revalidatePath("/messages");
 
-  return { conversationId: data };
+  return { conversationId: data as string };
 }
 
 export async function createGroupConversation(name: string, userIds: string[]) {

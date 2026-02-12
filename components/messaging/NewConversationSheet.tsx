@@ -29,10 +29,30 @@ export function NewConversationSheet({ open, onClose }: NewConversationSheetProp
   const inputRef = useRef<HTMLInputElement>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Focus the search input when the sheet opens
+  // Fetch all contacts from the API
+  async function fetchContacts(query: string = "") {
+    setLoading(true);
+    setError(null);
+    try {
+      const url = query
+        ? `/api/users/search?q=${encodeURIComponent(query)}`
+        : "/api/users/search";
+      const res = await fetch(url);
+      if (!res.ok) throw new Error("Search failed");
+      const json = await res.json();
+      setResults(json.data ?? []);
+    } catch {
+      setError("Failed to load contacts");
+      setResults([]);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  // Load contacts when the sheet opens, focus input
   useEffect(() => {
     if (open) {
-      // Small delay for the animation to start
+      fetchContacts();
       const timer = setTimeout(() => inputRef.current?.focus(), 100);
       return () => clearTimeout(timer);
     }
@@ -76,28 +96,10 @@ export function NewConversationSheet({ open, onClose }: NewConversationSheetProp
       clearTimeout(debounceRef.current);
     }
 
-    if (!value.trim()) {
-      setResults([]);
-      setLoading(false);
-      return;
-    }
-
-    setLoading(true);
-    debounceRef.current = setTimeout(async () => {
-      try {
-        const res = await fetch(`/api/users/search?q=${encodeURIComponent(value.trim())}`);
-        if (!res.ok) {
-          throw new Error("Search failed");
-        }
-        const json = await res.json();
-        setResults(json.data ?? []);
-      } catch {
-        setError("Failed to search users");
-        setResults([]);
-      } finally {
-        setLoading(false);
-      }
-    }, 300);
+    // Debounce the search — when cleared, reload all contacts
+    debounceRef.current = setTimeout(() => {
+      fetchContacts(value.trim());
+    }, value.trim() ? 300 : 0);
   }
 
   async function handleSelectUser(user: SearchResult) {
@@ -292,7 +294,7 @@ export function NewConversationSheet({ open, onClose }: NewConversationSheetProp
                     type="button"
                     onClick={() => {
                       setSearch("");
-                      setResults([]);
+                      fetchContacts();
                       inputRef.current?.focus();
                     }}
                     className="shrink-0 rounded-full p-0.5 text-text-tertiary hover:text-text-primary"
@@ -348,7 +350,7 @@ export function NewConversationSheet({ open, onClose }: NewConversationSheetProp
                 </div>
               )}
 
-              {!loading && search && results.length === 0 && (
+              {!loading && results.length === 0 && (
                 <div className="flex flex-col items-center justify-center py-12 text-center">
                   <UserPlus
                     size={32}
@@ -356,7 +358,23 @@ export function NewConversationSheet({ open, onClose }: NewConversationSheetProp
                     className="mb-3 text-text-tertiary"
                   />
                   <p className="text-sm text-text-tertiary">
-                    No users found for &ldquo;{search}&rdquo;
+                    {search
+                      ? `No users found for "${search}"`
+                      : "No other users found"}
+                  </p>
+                  {!search && (
+                    <p className="mt-1 text-xs text-text-tertiary">
+                      Other people need to sign up before you can message them
+                    </p>
+                  )}
+                </div>
+              )}
+
+              {/* Section label */}
+              {!loading && results.length > 0 && (
+                <div className="px-2 pt-1 pb-2">
+                  <p className="text-xs font-medium text-text-tertiary uppercase tracking-wide">
+                    {search ? "Results" : "All Contacts"}
                   </p>
                 </div>
               )}
@@ -410,23 +428,6 @@ export function NewConversationSheet({ open, onClose }: NewConversationSheetProp
                     )}
                   </button>
                 ))}
-
-              {/* Empty state when no search */}
-              {!loading && !search && results.length === 0 && mode === "search" && (
-                <div className="flex flex-col items-center justify-center py-12 text-center">
-                  <Search
-                    size={32}
-                    strokeWidth={1.5}
-                    className="mb-3 text-text-tertiary"
-                  />
-                  <p className="text-sm text-text-secondary">
-                    Search for people to start a conversation
-                  </p>
-                  <p className="mt-1 text-xs text-text-tertiary">
-                    Type a name to find someone
-                  </p>
-                </div>
-              )}
             </div>
 
             {/* Group create button */}

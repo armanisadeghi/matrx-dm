@@ -14,18 +14,21 @@ export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const query = searchParams.get("q")?.trim();
 
-  if (!query || query.length < 1) {
-    return NextResponse.json({ data: [] });
-  }
-
-  // Search profiles by display_name, excluding the current user
-  const { data, error } = await supabase
+  // Build the base query — always exclude the current user
+  let profileQuery = supabase
     .from("profiles")
     .select("id, display_name, avatar_url, is_online, status_text")
-    .neq("id", user.id)
-    .ilike("display_name", `%${query}%`)
+    .neq("id", user.id);
+
+  if (query && query.length > 0) {
+    // Filter by display_name when a search term is provided
+    profileQuery = profileQuery.ilike("display_name", `%${query}%`);
+  }
+
+  // When no query, return all users sorted by display_name (browse contacts)
+  const { data, error } = await profileQuery
     .order("display_name")
-    .limit(20);
+    .limit(30);
 
   if (error) {
     return NextResponse.json({ error: error.message }, { status: 500 });
