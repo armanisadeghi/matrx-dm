@@ -100,18 +100,30 @@ export async function exchangeCodeForTokens(
   const body = new URLSearchParams({
     grant_type: "authorization_code",
     code,
-    client_id: AIMATRX_OAUTH_CLIENT_ID,
     redirect_uri: redirectUri,
     code_verifier: codeVerifier,
   });
 
+  // Build request headers — always need the content type
+  const headers: Record<string, string> = {
+    "Content-Type": "application/x-www-form-urlencoded",
+  };
+
   if (AIMATRX_OAUTH_CLIENT_SECRET) {
-    body.set("client_secret", AIMATRX_OAUTH_CLIENT_SECRET);
+    // client_secret_basic: credentials go in the Authorization header as
+    // Base64( client_id ":" client_secret )
+    const credentials = btoa(
+      `${AIMATRX_OAUTH_CLIENT_ID}:${AIMATRX_OAUTH_CLIENT_SECRET}`
+    );
+    headers["Authorization"] = `Basic ${credentials}`;
   }
+
+  // client_id is still included in the body for identification
+  body.set("client_id", AIMATRX_OAUTH_CLIENT_ID);
 
   const response = await fetch(TOKEN_ENDPOINT, {
     method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    headers,
     body,
   });
 
