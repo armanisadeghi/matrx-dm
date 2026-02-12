@@ -74,7 +74,7 @@ export function buildAuthorizeURL(
     code_challenge: codeChallenge,
     code_challenge_method: "S256",
     state,
-    scope: "openid email profile",
+    scope: "email profile",
   });
   return `${AUTHORIZE_ENDPOINT}?${params.toString()}`;
 }
