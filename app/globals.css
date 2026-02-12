@@ -1,0 +1,234 @@
+@import "tailwindcss";
+
+/* ============================================================
+   MATRX DM — Design Token System
+   Single source of truth for all visual tokens.
+   Tailwind 4.1 CSS-first configuration via @theme directives.
+   ============================================================ */
+
+/* --- Base CSS Variables (Dark-first) --- */
+
+:root {
+  color-scheme: dark;
+
+  /* Backgrounds */
+  --bg-primary: #000000;
+  --bg-secondary: #1c1c1e;
+  --bg-tertiary: #2c2c2e;
+  --bg-elevated: #3a3a3c;
+  --bg-input: #1c1c1e;
+
+  /* Text */
+  --text-primary: #ffffff;
+  --text-secondary: #8e8e93;
+  --text-tertiary: #636366;
+
+  /* Accent */
+  --accent: #007aff;
+  --accent-hover: #0a84ff;
+
+  /* Message Bubbles */
+  --bubble-sent: #007aff;
+  --bubble-received: #2c2c2e;
+  --bubble-sent-text: #ffffff;
+  --bubble-received-text: #ffffff;
+
+  /* Borders */
+  --border-subtle: #38383a;
+
+  /* Semantic */
+  --destructive: #ff3b30;
+  --success: #30d158;
+  --warning: #ff9f0a;
+
+  /* Glass */
+  --glass-bg: rgba(44, 44, 46, 0.72);
+  --glass-border: rgba(255, 255, 255, 0.08);
+
+  /* Animation durations */
+  --duration-fast: 120ms;
+  --duration-normal: 200ms;
+  --duration-slow: 350ms;
+
+  /* Spring easing */
+  --ease-spring: cubic-bezier(0.175, 0.885, 0.32, 1.275);
+}
+
+/* Light mode overrides */
+:root.light,
+.light {
+  color-scheme: light;
+
+  --bg-primary: #ffffff;
+  --bg-secondary: #f2f2f7;
+  --bg-tertiary: #e5e5ea;
+  --bg-elevated: #ffffff;
+  --bg-input: #f2f2f7;
+
+  --text-primary: #000000;
+  --text-secondary: #6c6c70;
+  --text-tertiary: #aeaeb2;
+
+  --accent-hover: #0066cc;
+
+  --bubble-received: #e9e9eb;
+  --bubble-received-text: #000000;
+
+  --border-subtle: #c6c6c8;
+
+  --glass-bg: rgba(255, 255, 255, 0.72);
+  --glass-border: rgba(0, 0, 0, 0.06);
+}
+
+/* --- Tailwind Theme Tokens --- */
+
+@theme inline {
+  /* Colors — Semantic tokens */
+  --color-bg-primary: var(--bg-primary);
+  --color-bg-secondary: var(--bg-secondary);
+  --color-bg-tertiary: var(--bg-tertiary);
+  --color-bg-elevated: var(--bg-elevated);
+  --color-bg-input: var(--bg-input);
+
+  --color-text-primary: var(--text-primary);
+  --color-text-secondary: var(--text-secondary);
+  --color-text-tertiary: var(--text-tertiary);
+
+  --color-accent: var(--accent);
+  --color-accent-hover: var(--accent-hover);
+
+  --color-bubble-sent: var(--bubble-sent);
+  --color-bubble-received: var(--bubble-received);
+  --color-bubble-sent-text: var(--bubble-sent-text);
+  --color-bubble-received-text: var(--bubble-received-text);
+
+  --color-border-subtle: var(--border-subtle);
+
+  --color-destructive: var(--destructive);
+  --color-success: var(--success);
+  --color-warning: var(--warning);
+
+  --color-glass-bg: var(--glass-bg);
+  --color-glass-border: var(--glass-border);
+
+  /* Typography — System font stack (per vision: native rendering, no font loading) */
+  --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro", "Segoe UI", Roboto,
+    "Helvetica Neue", sans-serif;
+  --font-mono: "SF Mono", Menlo, Consolas, "Liberation Mono", "Courier New",
+    monospace;
+
+  /* Type Scale — 7 sizes mapped to semantic roles */
+  --text-xs: 0.625rem; /* 10px — timestamps, metadata */
+  --text-sm: 0.75rem; /* 12px — captions, secondary labels */
+  --text-base: 0.875rem; /* 14px — body text, messages */
+  --text-md: 1rem; /* 16px — conversation names, section headers */
+  --text-lg: 1.125rem; /* 18px — page-level titles */
+  --text-xl: 1.375rem; /* 22px — onboarding, empty states */
+  --text-2xl: 1.75rem; /* 28px — app name, major headings */
+
+  /* Animation timing */
+  --animate-duration-fast: var(--duration-fast);
+  --animate-duration-normal: var(--duration-normal);
+  --animate-duration-slow: var(--duration-slow);
+  --ease-spring: var(--ease-spring);
+}
+
+/* --- Global Styles --- */
+
+body {
+  font-family: var(--font-sans);
+}
+
+/* --- Custom Utilities --- */
+
+/* Glass effect — backdrop-blur + translucent bg for floating controls */
+@utility glass {
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  background-color: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+}
+
+/* Hide scrollbar cross-browser */
+@utility scrollbar-hide {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+  &::-webkit-scrollbar {
+    display: none;
+  }
+}
+
+/* iOS safe area bottom padding */
+@utility safe-bottom {
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
+/* iOS safe area top padding */
+@utility safe-top {
+  padding-top: env(safe-area-inset-top);
+}
+
+/* --- Custom Animations --- */
+
+@keyframes message-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes spring-scale {
+  0% {
+    opacity: 0;
+    transform: scale(0.95);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes shimmer {
+  0% {
+    background-position: -200% 0;
+  }
+  100% {
+    background-position: 200% 0;
+  }
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@utility animate-message-in {
+  animation: message-in var(--duration-normal) ease-out;
+}
+
+@utility animate-spring-scale {
+  animation: spring-scale 150ms var(--ease-spring);
+}
+
+@utility animate-shimmer {
+  background: linear-gradient(
+    90deg,
+    var(--bg-secondary) 25%,
+    var(--bg-tertiary) 50%,
+    var(--bg-secondary) 75%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 1.5s infinite;
+}
+
+@utility animate-fade-in {
+  animation: fade-in var(--duration-normal) ease-out;
+}
