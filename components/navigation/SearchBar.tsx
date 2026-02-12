@@ -2,13 +2,14 @@
 
 import { cn } from "@/lib/cn";
 import { Search, X } from "lucide-react";
-import { useRef, useState } from "react";
+import { useRef, useState, useImperativeHandle, type Ref } from "react";
 
 type SearchBarProps = {
   value: string;
   onChange: (value: string) => void;
   placeholder?: string;
   className?: string;
+  ref?: Ref<HTMLInputElement>;
 };
 
 export function SearchBar({
@@ -16,9 +17,13 @@ export function SearchBar({
   onChange,
   placeholder = "Search",
   className,
+  ref,
 }: SearchBarProps) {
   const [focused, setFocused] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+
+  // Expose the internal input ref via the forwarded ref
+  useImperativeHandle(ref, () => inputRef.current as HTMLInputElement);
 
   function handleClear() {
     onChange("");

@@ -1,12 +1,13 @@
 "use client";
 
 import { cn } from "@/lib/cn";
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useRouter, useParams } from "next/navigation";
 import { SquarePen } from "lucide-react";
 import { SearchBar } from "./SearchBar";
 import { IconButton } from "@/components/ui";
 import { ConversationListItem } from "@/components/messaging/ConversationListItem";
+import { NewConversationSheet } from "@/components/messaging/NewConversationSheet";
 import {
   ContextMenu,
   useContextMenu,
@@ -39,10 +40,32 @@ const FILTERS: { label: string; value: ConversationFilter }[] = [
 export function Sidebar({ conversations, className }: SidebarProps) {
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<ConversationFilter>("all");
+  const [newConvOpen, setNewConvOpen] = useState(false);
   const router = useRouter();
   const params = useParams();
   const activeId = params?.conversationId as string | undefined;
   const contextMenu = useContextMenu<ConversationWithDetails>();
+  const searchBarRef = useRef<HTMLInputElement>(null);
+
+  // Keyboard shortcuts: Cmd+N for new conversation, Cmd+K for search
+  useEffect(() => {
+    function handleKeyDown(e: KeyboardEvent) {
+      const mod = e.metaKey || e.ctrlKey;
+
+      if (mod && e.key === "n") {
+        e.preventDefault();
+        setNewConvOpen(true);
+      }
+
+      if (mod && e.key === "k") {
+        e.preventDefault();
+        searchBarRef.current?.focus();
+      }
+    }
+
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, []);
 
   const filtered = conversations.filter((c) => {
     if (search) {
@@ -114,12 +137,13 @@ export function Sidebar({ conversations, className }: SidebarProps) {
           label="New conversation"
           size="sm"
           variant="ghost"
+          onClick={() => setNewConvOpen(true)}
         />
       </div>
 
       {/* Search */}
       <div className="px-4 pb-2">
-        <SearchBar value={search} onChange={setSearch} />
+        <SearchBar ref={searchBarRef} value={search} onChange={setSearch} />
       </div>
 
       {/* Filters */}
@@ -196,6 +220,12 @@ export function Sidebar({ conversations, className }: SidebarProps) {
           onClose={contextMenu.close}
         />
       )}
+
+      {/* New conversation sheet */}
+      <NewConversationSheet
+        open={newConvOpen}
+        onClose={() => setNewConvOpen(false)}
+      />
     </aside>
   );
 }

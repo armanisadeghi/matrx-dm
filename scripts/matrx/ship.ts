@@ -46,18 +46,27 @@ interface ServerConfig {
   token: string;
 }
 
+interface UnifiedConfig {
+  ship?: { url?: string; apiKey?: string };
+  env?: {
+    doppler?: { project?: string; config?: string };
+    file?: string;
+  };
+  [key: string]: unknown;
+}
+
 // ── Configuration ────────────────────────────────────────────────────
 
 function findConfigFile(): { path: string; unified: boolean } | null {
   let dir = process.cwd();
   while (true) {
-    // Prefer unified .matrx.json
+    // Prefer unified .matrx.json (even without ship section — we'll enrich it)
     const unifiedPath = path.join(dir, ".matrx.json");
     if (existsSync(unifiedPath)) {
       try {
-        const raw = JSON.parse(readFileSync(unifiedPath, "utf-8"));
-        if (raw.ship) return { path: unifiedPath, unified: true };
-      } catch { /* fall through */ }
+        JSON.parse(readFileSync(unifiedPath, "utf-8"));
+        return { path: unifiedPath, unified: true };
+      } catch { /* fall through — invalid JSON */ }
     }
     // Fall back to legacy .matrx-ship.json
     const legacyPath = path.join(dir, ".matrx-ship.json");
@@ -155,70 +164,177 @@ function detectEnvFile(): string {
   return ".env";
 }
 
+/**
+ * Parse a .env file and return key-value pairs.
+ * Handles quoted values, comments, and blank lines.
+ */
+function parseEnvFile(filePath: string): Record<string, string> {
+  const result: Record<string, string> = {};
+  if (!existsSync(filePath)) return result;
+
+  try {
+    const content = readFileSync(filePath, "utf-8");
+    for (const line of content.split("\n")) {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith("#")) continue;
+      const eqIdx = trimmed.indexOf("=");
+      if (eqIdx === -1) continue;
+      const key = trimmed.substring(0, eqIdx).trim();
+      let value = trimmed.substring(eqIdx + 1).trim();
+      // Strip surrounding quotes
+      if ((value.startsWith('"') && value.endsWith('"')) ||
+          (value.startsWith("'") && value.endsWith("'"))) {
+        value = value.slice(1, -1);
+      }
+      result[key] = value;
+    }
+  } catch {
+    // Ignore read errors
+  }
+  return result;
+}
+
+/**
+ * Scan .env files in the project for ship config values.
+ * Checks .env.local, .env, .env.development in order.
+ */
+function loadEnvFileValues(): { url: string; apiKey: string } {
+  const cwd = process.cwd();
+  const candidates = [".env.local", ".env", ".env.development"];
+  let url = "";
+  let apiKey = "";
+
+  for (const candidate of candidates) {
+    const envVars = parseEnvFile(path.join(cwd, candidate));
+    if (!url && envVars.MATRX_SHIP_URL) url = envVars.MATRX_SHIP_URL;
+    if (!apiKey && envVars.MATRX_SHIP_API_KEY) apiKey = envVars.MATRX_SHIP_API_KEY;
+    if (url && apiKey) break;
+  }
+
+  return { url, apiKey };
+}
+
 function loadConfig(): ShipConfig {
+  // Priority 1: Process environment variables
   const envUrl = process.env.MATRX_SHIP_URL;
   const envKey = process.env.MATRX_SHIP_API_KEY;
 
-  if (envUrl && envKey) {
+  if (envUrl && envKey && !isPlaceholderUrl(envUrl) && !isPlaceholderKey(envKey)) {
     return { url: envUrl.replace(/\/+$/, ""), apiKey: envKey };
   }
 
+  // Priority 2: .env file values (loaded early so they can fill gaps in JSON config)
+  const envFileValues = loadEnvFileValues();
+
+  // Priority 3: JSON config file (.matrx.json or .matrx-ship.json)
   const configResult = findConfigFile();
+
+  // Start with whatever we have from env vars and .env files
+  let url = envUrl || envFileValues.url || "";
+  let apiKey = envKey || envFileValues.apiKey || "";
+
+  if (configResult) {
+    try {
+      const raw = readFileSync(configResult.path, "utf-8");
+      const parsed = JSON.parse(raw);
+
+      if (configResult.unified) {
+        // Unified .matrx.json — ship values come from parsed.ship
+        if (parsed.ship?.url && !isPlaceholderUrl(parsed.ship.url)) {
+          url = url || parsed.ship.url;
+        }
+        if (parsed.ship?.apiKey && !isPlaceholderKey(parsed.ship.apiKey)) {
+          apiKey = apiKey || parsed.ship.apiKey;
+        }
+      } else {
+        // Legacy .matrx-ship.json — ship values are top-level
+        if (parsed.url && !isPlaceholderUrl(parsed.url)) {
+          url = url || parsed.url;
+        }
+        if (parsed.apiKey && !isPlaceholderKey(parsed.apiKey)) {
+          apiKey = apiKey || parsed.apiKey;
+        }
+      }
+    } catch {
+      // Invalid JSON — fall through to check if env values are sufficient
+    }
+  }
+
+  // Validate what we have
+  if (url && apiKey && !isPlaceholderUrl(url) && !isPlaceholderKey(apiKey)) {
+    // If we loaded from env files but JSON config is missing/incomplete, auto-repair it
+    if (configResult) {
+      try {
+        const raw = readFileSync(configResult.path, "utf-8");
+        const parsed = JSON.parse(raw);
+        if (configResult.unified) {
+          const needsUpdate = !parsed.ship?.url || !parsed.ship?.apiKey ||
+            isPlaceholderUrl(parsed.ship?.url || "") || isPlaceholderKey(parsed.ship?.apiKey || "");
+          if (needsUpdate) {
+            parsed.ship = { url: url.replace(/\/+$/, ""), apiKey };
+            writeFileSync(configResult.path, JSON.stringify(parsed, null, 2) + "\n");
+            console.log(`   ✅ Auto-repaired ${configResult.path} with ship config from environment`);
+          }
+        }
+      } catch {
+        // Can't auto-repair — that's OK, we have valid values
+      }
+    } else {
+      // No config file at all — create .matrx.json with the values we found
+      const newConfig: UnifiedConfig = { ship: { url: url.replace(/\/+$/, ""), apiKey } };
+      const newPath = path.join(process.cwd(), ".matrx.json");
+      try {
+        writeFileSync(newPath, JSON.stringify(newConfig, null, 2) + "\n");
+        console.log(`   ✅ Created .matrx.json from environment values`);
+      } catch {
+        // Can't write — that's OK, we have valid values in memory
+      }
+    }
+
+    return { url: url.replace(/\/+$/, ""), apiKey };
+  }
+
+  // ── Nothing worked — give a clear, comprehensive error ──
+
+  const projectName = detectProjectName();
+  const sources: string[] = [];
+
   if (!configResult) {
-    console.error("❌ No .matrx.json or .matrx-ship.json found in this project.");
-    console.error("");
-    console.error("   To set up, run:");
-    console.error(`     ${shipCmd("init")} my-project "My Project Name"`);
-    console.error("");
-    console.error("   Or set environment variables:");
-    console.error("     export MATRX_SHIP_URL=https://ship-myproject.dev.codematrx.com");
-    console.error("     export MATRX_SHIP_API_KEY=sk_ship_xxxxx");
-    process.exit(1);
+    sources.push("No .matrx.json or .matrx-ship.json found");
+  } else {
+    sources.push(`Config file ${configResult.path} is missing ship.url and/or ship.apiKey`);
   }
 
-  const configPath = configResult.path;
-  let config!: ShipConfig;
-  try {
-    const raw = readFileSync(configPath, "utf-8");
-    const parsed = JSON.parse(raw);
-    if (configResult.unified && parsed.ship) {
-      config = { url: parsed.ship.url, apiKey: parsed.ship.apiKey };
-    } else {
-      config = parsed;
-    }
-  } catch {
-    console.error(`❌ Failed to parse ${configPath}`);
-    console.error("   Make sure it contains valid JSON.");
-    process.exit(1);
+  if (!envUrl && !envKey) {
+    sources.push("No MATRX_SHIP_URL / MATRX_SHIP_API_KEY in process environment");
   }
 
-  if (!config.url || !config.apiKey) {
-    console.error(`❌ Missing fields in ${configPath}`);
-    if (configResult.unified) {
-      console.error('   Required: { "ship": { "url": "...", "apiKey": "..." } }');
-    } else {
-      console.error('   Required: { "url": "...", "apiKey": "..." }');
-    }
-    process.exit(1);
+  if (!envFileValues.url && !envFileValues.apiKey) {
+    sources.push("No MATRX_SHIP_URL / MATRX_SHIP_API_KEY found in .env files");
   }
 
-  if (isPlaceholderUrl(config.url)) {
-    console.error("❌ Your config still has a placeholder URL.");
-    console.error(`   Current:  ${config.url}`);
-    console.error("");
-    console.error("   Run this to auto-provision an instance:");
-    console.error(`     ${shipCmd("init")} my-project "My Project Name"`);
-    process.exit(1);
+  console.error("❌ Ship configuration is incomplete.");
+  console.error("");
+  console.error("   Checked:");
+  for (const src of sources) {
+    console.error(`     • ${src}`);
   }
-
-  if (isPlaceholderKey(config.apiKey)) {
-    console.error("❌ Your .matrx-ship.json still has a placeholder API key.");
-    console.error("   Update it with the real key from your matrx-ship instance.");
-    console.error(`   Config file: ${configPath}`);
-    process.exit(1);
-  }
-
-  return { ...config, url: config.url.replace(/\/+$/, "") };
+  console.error("");
+  console.error("   To fix, do ONE of the following:");
+  console.error("");
+  console.error("   Option 1 — Auto-provision (recommended):");
+  console.error(`     ${shipCmd("init")} ${projectName} "${projectName.split("-").map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(" ")}"`);
+  console.error("");
+  console.error("   Option 2 — Add to your .env.local or .env file:");
+  console.error('     MATRX_SHIP_URL="https://ship-' + projectName + '.dev.codematrx.com"');
+  console.error('     MATRX_SHIP_API_KEY="sk_ship_your_key_here"');
+  console.error("");
+  console.error("   Option 3 — Set environment variables:");
+  console.error(`     export MATRX_SHIP_URL=https://ship-${projectName}.dev.codematrx.com`);
+  console.error("     export MATRX_SHIP_API_KEY=sk_ship_xxxxx");
+  console.error("");
+  console.error("   Then run the command again.");
+  process.exit(1);
 }
 
 // ── Server Config (global) ──────────────────────────────────────────
@@ -1516,12 +1632,12 @@ function ensureTsxDependency(): void {
 
     // tsx is missing — add it to devDependencies and install
     console.log("📦 Adding tsx to devDependencies (required for ship CLI)...");
-    
+
     // Add to package.json
     if (!pkg.devDependencies) pkg.devDependencies = {};
     pkg.devDependencies.tsx = "^4.21.0";
     writeFileSync(pkgPath, JSON.stringify(pkg, null, 2) + "\n", "utf-8");
-    
+
     // Detect package manager and install
     try {
       if (existsSync("pnpm-lock.yaml") || existsSync("pnpm-workspace.yaml")) {
@@ -1598,7 +1714,7 @@ async function checkIntegrity(cliPath: string = "cli/ship.ts"): Promise<boolean>
   console.log("🔍 Checking project integrity...");
 
   // ── 1. Load / Initialize Config ──
-  let config: Record<string, any> = {};
+  let config: UnifiedConfig = {};
   if (existsSync(unifiedPath)) {
     try {
       config = JSON.parse(readFileSync(unifiedPath, "utf-8"));
@@ -1661,19 +1777,29 @@ async function checkIntegrity(cliPath: string = "cli/ship.ts"): Promise<boolean>
   // ── 3. Validation & Interactive Setup ──
   let needsSave = migrated;
 
-  // Extract defaults from current config or detention
+  // Extract defaults from current config, env vars, AND .env files
+  const envFileVals = loadEnvFileValues();
   const current = {
-    shipUrl: config.ship?.url || "",
-    shipKey: config.ship?.apiKey || "",
+    shipUrl: config.ship?.url || process.env.MATRX_SHIP_URL || envFileVals.url || "",
+    shipKey: config.ship?.apiKey || process.env.MATRX_SHIP_API_KEY || envFileVals.apiKey || "",
     dopplerProject: config.env?.doppler?.project || detectProjectName(),
     dopplerConfig: config.env?.doppler?.config || "dev",
     envFile: config.env?.file || detectEnvFile(),
   };
 
-  const isShipOk = current.shipUrl && 
-                   current.shipKey && 
-                   !isPlaceholderUrl(current.shipUrl) && 
-                   !isPlaceholderKey(current.shipKey);
+  // If we found ship values from env vars / .env files but not in the JSON, auto-repair
+  if (current.shipUrl && current.shipKey &&
+      !isPlaceholderUrl(current.shipUrl) && !isPlaceholderKey(current.shipKey) &&
+      (!config.ship?.url || !config.ship?.apiKey)) {
+    config.ship = { url: current.shipUrl, apiKey: current.shipKey };
+    needsSave = true;
+    console.log("   ✅ Auto-repaired ship config from environment/.env values");
+  }
+
+  const isShipOk = current.shipUrl &&
+    current.shipKey &&
+    !isPlaceholderUrl(current.shipUrl) &&
+    !isPlaceholderKey(current.shipKey);
   const isEnvOk = !!(config.env && config.env.doppler && config.env.file);
 
   if (!isShipOk) {
@@ -1691,9 +1817,9 @@ async function checkIntegrity(cliPath: string = "cli/ship.ts"): Promise<boolean>
     console.log("   Or manually enter your existing instance details:");
     console.log("   (Full URL required, e.g., https://ship-project.dev.codematrx.com)");
     console.log("");
-    
+
     const urlInput = await promptUser("Ship URL (or press Enter to skip)", "");
-    
+
     // If user skipped, don't save invalid config
     if (!urlInput || urlInput.trim() === "") {
       console.log("");
@@ -1702,7 +1828,7 @@ async function checkIntegrity(cliPath: string = "cli/ship.ts"): Promise<boolean>
       console.log("");
       return false;
     }
-    
+
     // Validate URL format
     if (isPlaceholderUrl(urlInput) || !urlInput.startsWith("http")) {
       console.log("");
@@ -1714,10 +1840,10 @@ async function checkIntegrity(cliPath: string = "cli/ship.ts"): Promise<boolean>
       console.log("");
       return false;
     }
-    
+
     current.shipUrl = urlInput;
     current.shipKey = await promptUser("Ship API Key", "");
-    
+
     // Validate the key too
     if (!current.shipKey || isPlaceholderKey(current.shipKey)) {
       console.log("");
@@ -1726,7 +1852,7 @@ async function checkIntegrity(cliPath: string = "cli/ship.ts"): Promise<boolean>
       console.log("");
       return false;
     }
-    
+
     needsSave = true;
   }
 
@@ -1753,9 +1879,9 @@ async function checkIntegrity(cliPath: string = "cli/ship.ts"): Promise<boolean>
 
   if (needsSave) {
     // Only save ship config if we have valid values
-    if (current.shipUrl && current.shipKey && 
-        !isPlaceholderUrl(current.shipUrl) && 
-        !isPlaceholderKey(current.shipKey)) {
+    if (current.shipUrl && current.shipKey &&
+      !isPlaceholderUrl(current.shipUrl) &&
+      !isPlaceholderKey(current.shipKey)) {
       config.ship = { url: current.shipUrl, apiKey: current.shipKey };
     }
     // env already updated
