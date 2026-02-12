@@ -44,3 +44,8 @@ next-env.d.ts
 
 # Matrx Ship config (contains API key)
 .matrx-ship.json
+
+# Matrx Config
+.matrx.json
+.matrx-tools.conf
+.env-backups/

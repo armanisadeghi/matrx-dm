@@ -1,4 +1,5 @@
 #!/usr/bin/env tsx
+/// <reference types="node" />
 /**
  * Matrx Ship CLI
  *
@@ -21,7 +22,7 @@
  */
 
 import { execSync } from "child_process";
-import { existsSync, readFileSync, writeFileSync, mkdirSync } from "fs";
+import { existsSync, readFileSync, writeFileSync, mkdirSync, unlinkSync } from "fs";
 import * as path from "path";
 import { homedir } from "os";
 
@@ -47,11 +48,20 @@ interface ServerConfig {
 
 // ── Configuration ────────────────────────────────────────────────────
 
-function findConfigFile(): string | null {
+function findConfigFile(): { path: string; unified: boolean } | null {
   let dir = process.cwd();
   while (true) {
-    const configPath = path.join(dir, ".matrx-ship.json");
-    if (existsSync(configPath)) return configPath;
+    // Prefer unified .matrx.json
+    const unifiedPath = path.join(dir, ".matrx.json");
+    if (existsSync(unifiedPath)) {
+      try {
+        const raw = JSON.parse(readFileSync(unifiedPath, "utf-8"));
+        if (raw.ship) return { path: unifiedPath, unified: true };
+      } catch { /* fall through */ }
+    }
+    // Fall back to legacy .matrx-ship.json
+    const legacyPath = path.join(dir, ".matrx-ship.json");
+    if (existsSync(legacyPath)) return { path: legacyPath, unified: false };
     const parent = path.dirname(dir);
     if (parent === dir) return null;
     dir = parent;
@@ -80,13 +90,69 @@ function isPlaceholderKey(key: string): boolean {
   );
 }
 
-/** Returns the correct command prefix based on whether the project has package.json */
+/** Returns the correct command prefix based on whether the project has package.json or Makefile */
 function shipCmd(sub?: string): string {
-  const hasPackageJson = existsSync(path.join(process.cwd(), "package.json"));
+  const cwd = process.cwd();
+  const hasPackageJson = existsSync(path.join(cwd, "package.json"));
   if (hasPackageJson) {
     return sub ? `pnpm ship:${sub}` : "pnpm ship";
   }
-  return sub ? `bash scripts/matrx/ship.sh ${sub}` : "bash scripts/matrx/ship.sh";
+  const hasMakefile = existsSync(path.join(cwd, "Makefile"));
+  if (hasMakefile) {
+    if (!sub) return 'make ship MSG="..."';
+    if (sub === "minor") return 'make ship-minor MSG="..."';
+    if (sub === "major") return 'make ship-major MSG="..."';
+    return `make ship-${sub}`;
+  }
+  return sub ? `bash scripts/matrx/ship.sh ${sub}` : 'bash scripts/matrx/ship.sh "..."';
+}
+
+/** Returns the correct env-sync command prefix */
+function envCmd(sub: string): string {
+  const cwd = process.cwd();
+  const hasPackageJson = existsSync(path.join(cwd, "package.json"));
+  if (hasPackageJson) {
+    return `pnpm env:${sub}`;
+  }
+  const hasMakefile = existsSync(path.join(cwd, "Makefile"));
+  if (hasMakefile) {
+    return `make env-${sub}`;
+  }
+  return `bash scripts/matrx/env-sync.sh ${sub}`;
+}
+
+/** Prompt the user with a question and optional default */
+async function promptUser(question: string, defaultVal?: string): Promise<string> {
+  const { createInterface } = await import("readline");
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  const suffix = defaultVal ? ` [${defaultVal}]` : "";
+  const answer = await new Promise<string>((resolve) => {
+    rl.question(`   ${question}${suffix}: `, resolve);
+  });
+  rl.close();
+  return answer.trim() || defaultVal || "";
+}
+
+/** Detect a default project name from directory */
+function detectProjectName(): string {
+  try {
+    const dir = execSync("git rev-parse --show-toplevel", { encoding: "utf-8" }).trim();
+    return path.basename(dir).toLowerCase().replace(/[^a-z0-9-]/g, "-");
+  } catch {
+    return path.basename(process.cwd()).toLowerCase().replace(/[^a-z0-9-]/g, "-");
+  }
+}
+
+/** Detect default env file */
+function detectEnvFile(): string {
+  const cwd = process.cwd();
+  for (const candidate of [".env.local", ".env", ".env.development"]) {
+    if (existsSync(path.join(cwd, candidate))) return candidate;
+  }
+  if (existsSync(path.join(cwd, "next.config.ts")) || existsSync(path.join(cwd, "next.config.js"))) {
+    return ".env.local";
+  }
+  return ".env";
 }
 
 function loadConfig(): ShipConfig {
@@ -97,9 +163,9 @@ function loadConfig(): ShipConfig {
     return { url: envUrl.replace(/\/+$/, ""), apiKey: envKey };
   }
 
-  const configPath = findConfigFile();
-  if (!configPath) {
-    console.error("❌ No .matrx-ship.json found in this project.");
+  const configResult = findConfigFile();
+  if (!configResult) {
+    console.error("❌ No .matrx.json or .matrx-ship.json found in this project.");
     console.error("");
     console.error("   To set up, run:");
     console.error(`     ${shipCmd("init")} my-project "My Project Name"`);
@@ -110,24 +176,34 @@ function loadConfig(): ShipConfig {
     process.exit(1);
   }
 
+  const configPath = configResult.path;
   let config!: ShipConfig;
   try {
     const raw = readFileSync(configPath, "utf-8");
-    config = JSON.parse(raw);
+    const parsed = JSON.parse(raw);
+    if (configResult.unified && parsed.ship) {
+      config = { url: parsed.ship.url, apiKey: parsed.ship.apiKey };
+    } else {
+      config = parsed;
+    }
   } catch {
     console.error(`❌ Failed to parse ${configPath}`);
-    console.error("   Make sure it contains valid JSON with 'url' and 'apiKey'.");
+    console.error("   Make sure it contains valid JSON.");
     process.exit(1);
   }
 
   if (!config.url || !config.apiKey) {
     console.error(`❌ Missing fields in ${configPath}`);
-    console.error('   Required: { "url": "...", "apiKey": "..." }');
+    if (configResult.unified) {
+      console.error('   Required: { "ship": { "url": "...", "apiKey": "..." } }');
+    } else {
+      console.error('   Required: { "url": "...", "apiKey": "..." }');
+    }
     process.exit(1);
   }
 
   if (isPlaceholderUrl(config.url)) {
-    console.error("❌ Your .matrx-ship.json still has a placeholder URL.");
+    console.error("❌ Your config still has a placeholder URL.");
     console.error(`   Current:  ${config.url}`);
     console.error("");
     console.error("   Run this to auto-provision an instance:");
@@ -209,9 +285,7 @@ function getCodeStats(): { linesAdded: number; linesDeleted: number; filesChange
 
     if (stats) {
       for (const line of stats.split("\n")) {
-        const parts = line.trim().split(/\s+/);
-        const added = parts[0] ?? "-";
-        const deleted = parts[1] ?? "-";
+        const [added, deleted] = line.trim().split(/\s+/);
         if (added !== "-" && deleted !== "-") {
           linesAdded += parseInt(added) || 0;
           linesDeleted += parseInt(deleted) || 0;
@@ -277,7 +351,7 @@ async function callMcpTool(
     if (response.status === 401) {
       throw new Error(
         "Authentication failed. Your server token is invalid.\n" +
-          "   Run: pnpm ship:setup --token YOUR_TOKEN",
+        `   Run: ${shipCmd("setup")} --token YOUR_TOKEN`,
       );
     }
 
@@ -316,18 +390,18 @@ async function callMcpTool(
     if (msg.includes("abort") || msg.includes("timeout")) {
       throw new Error(
         `Connection to MCP server timed out.\n` +
-          `   Server: ${serverConfig.server}\n` +
-          "   Is the server running?",
+        `   Server: ${serverConfig.server}\n` +
+        "   Is the server running?",
       );
     }
     if (msg.includes("fetch failed") || msg.includes("ECONNREFUSED") || msg.includes("ENOTFOUND")) {
       throw new Error(
         `Cannot reach MCP server at ${serverConfig.server}\n` +
-          "   Possible causes:\n" +
-          "     - The server is not running\n" +
-          "     - The URL is wrong\n" +
-          "     - Network/firewall is blocking the connection\n" +
-          `\n   To verify: curl ${serverConfig.server}/health`,
+        "   Possible causes:\n" +
+        "     - The server is not running\n" +
+        "     - The URL is wrong\n" +
+        "     - Network/firewall is blocking the connection\n" +
+        `\n   To verify: curl ${serverConfig.server}/health`,
       );
     }
     throw error;
@@ -336,15 +410,71 @@ async function callMcpTool(
 
 // ── API Client ───────────────────────────────────────────────────────
 
+/**
+ * Safely parse a fetch response as JSON with clear error messages.
+ * Checks response.ok first to avoid cryptic JSON parse errors on HTML/text error pages.
+ */
+async function safeJsonResponse(
+  response: Response,
+  url: string,
+): Promise<{ ok: boolean; data: Record<string, unknown> }> {
+  const body = await response.text();
+
+  if (!response.ok) {
+    // Try to parse as JSON anyway — some APIs return JSON error bodies
+    try {
+      const errData = JSON.parse(body) as Record<string, unknown>;
+      return { ok: false, data: errData };
+    } catch {
+      // Not JSON — build a human-readable error
+      if (response.status === 404) {
+        throw new Error(
+          `Server returned 404 Not Found for ${url}\n` +
+          "   Possible causes:\n" +
+          "     - The matrx-ship instance is not running\n" +
+          "     - The URL in .matrx-ship.json is incorrect\n" +
+          "     - The route does not exist on the target server\n" +
+          `\n   To verify, try: curl ${url.replace(/\/api\/.*/, "/api/health")}`,
+        );
+      }
+      if (response.status === 401 || response.status === 403) {
+        throw new Error(
+          `Authentication failed (${response.status}) for ${url}\n` +
+          "   The API key in your config may be invalid or expired.\n" +
+          `   Run: ${shipCmd("init")}  to reconfigure.`,
+        );
+      }
+      throw new Error(
+        `Server returned ${response.status} ${response.statusText}\n` +
+        `   URL: ${url}\n` +
+        `   Response: ${body.slice(0, 300)}`,
+      );
+    }
+  }
+
+  // Response was OK — parse as JSON
+  try {
+    const data = JSON.parse(body) as Record<string, unknown>;
+    return { ok: true, data };
+  } catch {
+    throw new Error(
+      `Server returned 200 OK but response is not valid JSON\n` +
+      `   URL: ${url}\n` +
+      `   Response: ${body.slice(0, 300)}`,
+    );
+  }
+}
+
 async function shipVersion(
   config: ShipConfig,
   payload: Record<string, unknown>,
 ): Promise<{ ok: boolean; data: Record<string, unknown> }> {
+  const url = `${config.url}/api/ship`;
   try {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 15000);
 
-    const response = await fetch(`${config.url}/api/ship`, {
+    const response = await fetch(url, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -355,26 +485,34 @@ async function shipVersion(
     });
     clearTimeout(timeout);
 
-    const data = (await response.json()) as Record<string, unknown>;
-    return { ok: response.ok, data };
+    return await safeJsonResponse(response, url);
   } catch (error) {
+    // Re-throw errors already formatted by safeJsonResponse
+    if (error instanceof Error && (
+      error.message.includes("Server returned") ||
+      error.message.includes("Authentication failed") ||
+      error.message.includes("not valid JSON")
+    )) {
+      throw error;
+    }
+
     const msg = error instanceof Error ? error.message : String(error);
 
     if (msg.includes("abort") || msg.includes("timeout")) {
       throw new Error(
         `Connection to ${config.url} timed out after 15 seconds.\n` +
-          "   Is the matrx-ship server running?",
+        "   Is the matrx-ship server running?",
       );
     }
     if (msg.includes("fetch failed") || msg.includes("ECONNREFUSED") || msg.includes("ENOTFOUND")) {
       throw new Error(
         `Cannot reach ${config.url}\n` +
-          "   Possible causes:\n" +
-          "     - The matrx-ship server is not running\n" +
-          "     - The URL in .matrx-ship.json is wrong\n" +
-          "     - DNS hasn't propagated yet\n" +
-          "     - Network/firewall is blocking the connection\n" +
-          `\n   To verify, try: curl ${config.url}/api/health`,
+        "   Possible causes:\n" +
+        "     - The matrx-ship server is not running\n" +
+        "     - The URL in .matrx-ship.json is wrong\n" +
+        "     - DNS hasn't propagated yet\n" +
+        "     - Network/firewall is blocking the connection\n" +
+        `\n   To verify, try: curl ${config.url}/api/health`,
       );
     }
     throw new Error(`Network error: ${msg}`);
@@ -382,17 +520,18 @@ async function shipVersion(
 }
 
 async function getStatus(config: ShipConfig): Promise<void> {
+  const url = `${config.url}/api/version`;
   try {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 10000);
 
-    const response = await fetch(`${config.url}/api/version`, {
+    const response = await fetch(url, {
       headers: { Authorization: `Bearer ${config.apiKey}` },
       signal: controller.signal,
     });
     clearTimeout(timeout);
 
-    const data = (await response.json()) as Record<string, unknown>;
+    const { data } = await safeJsonResponse(response, url);
 
     console.log("\n📦 Current Version Status");
     console.log(`   Server:  ${config.url}`);
@@ -424,10 +563,10 @@ async function handleSetup(args: string[]): Promise<void> {
 
   for (let i = 0; i < args.length; i++) {
     if ((args[i] === "--token" || args[i] === "-t") && args[i + 1]) {
-      token = args[i + 1]!;
+      token = args[i + 1];
       i++;
     } else if ((args[i] === "--server" || args[i] === "-s") && args[i + 1]) {
-      server = args[i + 1]!;
+      server = args[i + 1];
       i++;
     }
   }
@@ -453,9 +592,10 @@ async function handleSetup(args: string[]): Promise<void> {
   try {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 10000);
-    const response = await fetch(`${server}/health`, { signal: controller.signal });
+    const healthUrl = `${server}/health`;
+    const response = await fetch(healthUrl, { signal: controller.signal });
     clearTimeout(timeout);
-    const data = (await response.json()) as Record<string, unknown>;
+    const { data } = await safeJsonResponse(response, healthUrl);
     if (data.status !== "ok") throw new Error("Health check failed");
     console.log(`✅ Connected to server manager`);
   } catch (error) {
@@ -475,12 +615,7 @@ async function handleSetup(args: string[]): Promise<void> {
   console.log(`💾 Server credentials saved to ${GLOBAL_CONFIG_FILE}`);
   console.log("");
   console.log("   You can now provision instances in any project:");
-  const hasPackageJson = existsSync(path.join(process.cwd(), "package.json"));
-  if (hasPackageJson) {
-    console.log('     pnpm ship:init my-project "My Project Name"');
-  } else {
-    console.log('     bash scripts/matrx/ship.sh init my-project "My Project Name"');
-  }
+  console.log(`     ${shipCmd("init")} my-project "My Project Name"`);
   console.log("");
 }
 
@@ -499,10 +634,10 @@ async function handleInit(args: string[]): Promise<void> {
   const positional: string[] = [];
   for (let i = 0; i < args.length; i++) {
     if ((args[i] === "--token" || args[i] === "-t") && args[i + 1]) {
-      tokenOverride = args[i + 1]!;
+      tokenOverride = args[i + 1];
       i++;
     } else if ((args[i] === "--server" || args[i] === "-s") && args[i + 1]) {
-      serverOverride = args[i + 1]!;
+      serverOverride = args[i + 1];
       i++;
     } else if (!args[i].startsWith("--")) {
       positional.push(args[i]);
@@ -607,12 +742,7 @@ async function handleInit(args: string[]): Promise<void> {
       console.error(`     ${serverConfig!.server}/admin/`);
       console.error("");
       console.error("   Then configure manually:");
-      const hasPackageJson = existsSync(path.join(process.cwd(), "package.json"));
-      if (hasPackageJson) {
-        console.error(`     pnpm ship:init --url https://ship-${projectName}.dev.codematrx.com --key YOUR_API_KEY`);
-      } else {
-        console.error(`     bash scripts/matrx/ship.sh init --url https://ship-${projectName}.dev.codematrx.com --key YOUR_API_KEY`);
-      }
+      console.error(`     ${shipCmd("init")} --url https://ship-${projectName}.dev.codematrx.com --key YOUR_API_KEY`);
       process.exit(1);
     }
   } else if (result.error) {
@@ -629,21 +759,42 @@ async function handleInit(args: string[]): Promise<void> {
   const instanceUrl = result.url as string;
   const apiKey = result.api_key as string;
 
-  // Write .matrx-ship.json
-  const configPath = path.join(process.cwd(), ".matrx-ship.json");
-  const config: ShipConfig = { url: instanceUrl, apiKey };
-  writeFileSync(configPath, JSON.stringify(config, null, 2) + "\n");
+  // Write config — prefer unified .matrx.json, fall back to .matrx-ship.json for compatibility
+  let configPath: string;
+  const existingUnified = path.join(process.cwd(), ".matrx.json");
+  if (existsSync(existingUnified)) {
+    // Merge into existing .matrx.json
+    try {
+      const existing = JSON.parse(readFileSync(existingUnified, "utf-8"));
+      existing.ship = { url: instanceUrl, apiKey };
+      writeFileSync(existingUnified, JSON.stringify(existing, null, 2) + "\n");
+      configPath = existingUnified;
+    } catch {
+      // If parse fails, write new .matrx.json
+      writeFileSync(existingUnified, JSON.stringify({ ship: { url: instanceUrl, apiKey } }, null, 2) + "\n");
+      configPath = existingUnified;
+    }
+  } else {
+    // Create new .matrx.json
+    configPath = existingUnified;
+    writeFileSync(configPath, JSON.stringify({ ship: { url: instanceUrl, apiKey } }, null, 2) + "\n");
+  }
 
   // Add to .gitignore if needed
   const gitignorePath = path.join(process.cwd(), ".gitignore");
   if (existsSync(gitignorePath)) {
     const gitignore = readFileSync(gitignorePath, "utf-8");
-    if (!gitignore.includes(".matrx-ship.json")) {
+    const needsUnified = !gitignore.includes(".matrx.json");
+    const needsLegacy = !gitignore.includes(".matrx-ship.json");
+    if (needsUnified || needsLegacy) {
+      let addition = "";
+      if (needsUnified) addition += "\n.matrx.json";
+      if (needsLegacy) addition += "\n.matrx-ship.json";
       writeFileSync(
         gitignorePath,
-        gitignore.trimEnd() + "\n\n# Matrx Ship config (contains API key)\n.matrx-ship.json\n",
+        gitignore.trimEnd() + "\n\n# Matrx config (contains API keys)" + addition + "\n",
       );
-      console.log("📄 Added .matrx-ship.json to .gitignore");
+      console.log("📄 Updated .gitignore");
     }
   }
 
@@ -655,9 +806,10 @@ async function handleInit(args: string[]): Promise<void> {
     try {
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), 5000);
-      const response = await fetch(`${instanceUrl}/api/health`, { signal: controller.signal });
+      const bootHealthUrl = `${instanceUrl}/api/health`;
+      const response = await fetch(bootHealthUrl, { signal: controller.signal });
       clearTimeout(timeout);
-      const data = (await response.json()) as Record<string, unknown>;
+      const { data } = await safeJsonResponse(response, bootHealthUrl);
       if (data.status === "ok") {
         healthy = true;
         break;
@@ -684,13 +836,11 @@ async function handleInit(args: string[]): Promise<void> {
   console.log(`   🔑 API Key:   ${apiKey}`);
   console.log(`   📄 Config:    ${configPath}`);
   console.log("");
-  const hasPackageJson = existsSync(path.join(process.cwd(), "package.json"));
+  console.log("");
+  await checkIntegrity();
+  console.log("");
   console.log("   You're ready to ship:");
-  if (hasPackageJson) {
-    console.log('     pnpm ship "your first commit message"');
-  } else {
-    console.log('     bash scripts/matrx/ship.sh "your first commit message"');
-  }
+  console.log(`     ${shipCmd()} "your first commit message"`);
   console.log("");
 }
 
@@ -700,10 +850,10 @@ async function handleLegacyInit(args: string[]): Promise<void> {
 
   for (let i = 0; i < args.length; i++) {
     if (args[i] === "--url" && args[i + 1]) {
-      url = args[i + 1]!;
+      url = args[i + 1];
       i++;
     } else if (args[i] === "--key" && args[i + 1]) {
-      key = args[i + 1]!;
+      key = args[i + 1];
       i++;
     }
   }
@@ -720,9 +870,10 @@ async function handleLegacyInit(args: string[]): Promise<void> {
   try {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 10000);
-    const response = await fetch(`${url}/api/health`, { signal: controller.signal });
+    const initHealthUrl = `${url}/api/health`;
+    const response = await fetch(initHealthUrl, { signal: controller.signal });
     clearTimeout(timeout);
-    const data = (await response.json()) as Record<string, unknown>;
+    const { data } = await safeJsonResponse(response, initHealthUrl);
     if (data.status !== "ok") throw new Error("Health check returned non-ok status");
     console.log(`✅ Connected to ${data.service} (project: ${data.project})`);
   } catch (error) {
@@ -742,7 +893,7 @@ async function handleLegacyInit(args: string[]): Promise<void> {
   const configPath = path.join(process.cwd(), ".matrx-ship.json");
   writeFileSync(configPath, JSON.stringify(config, null, 2) + "\n");
   console.log(`📄 Config saved to ${configPath}`);
-  console.log('\n   You can now run: pnpm ship "your commit message"');
+  console.log(`\n   You can now run: ${shipCmd()} "your commit message"`);
   console.log();
 }
 
@@ -752,10 +903,13 @@ async function handleShip(args: string[]): Promise<void> {
   const commitMessage = args.find((arg) => !arg.startsWith("--"));
 
   if (!commitMessage) {
+    const ship = shipCmd();
+    const minor = shipCmd("minor");
+    const major = shipCmd("major");
     console.error("❌ Error: Commit message is required");
-    console.error('\n   Usage: pnpm ship "Your commit message"');
-    console.error('          pnpm ship:minor "Your commit message"');
-    console.error('          pnpm ship:major "Your commit message"');
+    console.error(`\n   Usage: ${ship} "Your commit message"`);
+    console.error(`          ${minor} "Your commit message"`);
+    console.error(`          ${major} "Your commit message"`);
     return void process.exit(1);
   }
 
@@ -840,7 +994,45 @@ async function handleShip(args: string[]): Promise<void> {
 
   console.log("\n✨ Ship complete!");
   console.log(`   Commit: "${commitMessage}"`);
-  console.log("   Changes have been pushed to remote\n");
+  console.log("   Changes have been pushed to remote");
+
+  // Step 5: Verify deployment (optional, non-blocking)
+  const shouldVerify = !args.includes("--no-verify");
+  if (shouldVerify) {
+    console.log("\n🔍 Step 5/5: Verifying deployment...");
+    console.log("   (This checks if the server successfully deployed your changes)");
+
+    try {
+      // Wait a moment for git hooks to trigger
+      await new Promise((resolve) => setTimeout(resolve, 3000));
+
+      // Try to check health endpoint
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 10000);
+
+      const healthUrl = `${config.url}/api/health`;
+      const response = await fetch(healthUrl, { signal: controller.signal });
+      clearTimeout(timeout);
+
+      if (response.ok) {
+        const data = await response.json() as Record<string, unknown>;
+        console.log(`✅ Deployment verified - server is healthy`);
+        if (data.version) {
+          console.log(`   Version: ${data.version} (build #${data.buildNumber || '?'})`);
+        }
+      } else {
+        console.log(`⚠️  Server responded with status ${response.status}`);
+        console.log(`   The deployment may still be in progress.`);
+        console.log(`   Check manually: ${healthUrl}`);
+      }
+    } catch (error) {
+      console.log(`⚠️  Could not verify deployment`);
+      console.log(`   This is normal if deployment takes time.`);
+      console.log(`   Check manually: ${config.url}/api/health`);
+    }
+  }
+
+  console.log("");
 }
 
 // ── History Import ────────────────────────────────────────────────────
@@ -920,8 +1112,7 @@ function assignVersions(
   entries: GitCommitEntry[],
   startVersion: string,
 ): { version: string; buildNumber: number; entry: GitCommitEntry }[] {
-  const [major, minor] = startVersion.split(".").map(Number);
-  let patch = Number(startVersion.split(".")[2]);
+  let [major, minor, patch] = startVersion.split(".").map(Number);
   return entries.map((entry, i) => {
     if (i > 0) patch++;
     return {
@@ -930,6 +1121,116 @@ function assignVersions(
       entry,
     };
   });
+}
+
+async function handleForceRemove(args: string[]): Promise<void> {
+  const instanceName = args.find((arg) => !arg.startsWith("--"));
+  const deleteData = args.includes("--delete-data");
+
+  if (!instanceName) {
+    console.error("❌ Error: Instance name is required");
+    console.error(`\n   Usage: ${shipCmd("force-remove")} INSTANCE_NAME`);
+    console.error(`          ${shipCmd("force-remove")} INSTANCE_NAME --delete-data`);
+    console.error("");
+    console.error("   WARNING: This will forcefully remove the instance even if");
+    console.error("            Docker Compose fails. Use with caution!");
+    return void process.exit(1);
+  }
+
+  const config = loadConfig();
+
+  console.log("");
+  console.log("⚠️  FORCE REMOVE - This will forcefully remove the instance");
+  console.log("══════════════════════════════════════════════════════════");
+  console.log(`   Instance:    ${instanceName}`);
+  console.log(`   Server:      ${config.url}`);
+  console.log(`   Delete data: ${deleteData ? "YES - All data will be PERMANENTLY deleted" : "NO - Only containers"}`);
+  console.log("");
+  console.log("   This operation:");
+  console.log("   - Removes containers even if Docker Compose fails");
+  console.log("   - Removes the instance from the deployment registry");
+  if (deleteData) {
+    console.log("   - PERMANENTLY DELETES all database data and files");
+  }
+  console.log("");
+
+  // Confirmation prompt
+  console.log("   Type the instance name to confirm: ");
+  const readline = await import("readline");
+  const rl = readline.createInterface({
+    input: process.stdin,
+    output: process.stdout,
+  });
+
+  const confirmation = await new Promise<string>((resolve) => {
+    rl.question("   > ", resolve);
+  });
+  rl.close();
+
+  if (confirmation.trim() !== instanceName) {
+    console.log("\n❌ Confirmation failed. Instance name did not match.");
+    console.log("   No changes were made.");
+    process.exit(1);
+  }
+
+  console.log("\n🗑️  Removing instance (forced)...");
+
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 30000);
+
+    const url = new URL(`${config.url}/api/instances/${instanceName}`);
+    url.searchParams.set("delete_data", String(deleteData));
+    url.searchParams.set("force", "true");
+
+    const response = await fetch(url.toString(), {
+      method: "DELETE",
+      headers: {
+        Authorization: `Bearer ${config.apiKey}`,
+        "Content-Type": "application/json",
+      },
+      signal: controller.signal,
+    });
+    clearTimeout(timeout);
+
+    const { ok: responseOk, data } = await safeJsonResponse(response, url.toString());
+
+    if (!responseOk || !data.success) {
+      throw new Error((data.error as string) || "Force remove failed");
+    }
+
+    console.log("\n✅ Instance forcefully removed");
+    console.log(`   Instance:     ${data.removed}`);
+    console.log(`   Data deleted: ${data.data_deleted ? "Yes" : "No"}`);
+    console.log(`   Forced:       ${data.forced ? "Yes" : "No"}`);
+
+    if (data.results) {
+      const results = data.results as Record<string, unknown>;
+      console.log("\n   Cleanup details:");
+      if (results.compose_down) {
+        const composeDown = results.compose_down as { success: boolean };
+        console.log(`   - Docker Compose: ${composeDown.success ? "✓" : "✗"}`);
+      }
+      if (results.force_cleanup) {
+        console.log(`   - Force cleanup: Applied`);
+      }
+      if (results.directory_deleted) {
+        const directoryDeleted = results.directory_deleted as { success: boolean };
+        console.log(`   - Directory: ${directoryDeleted.success ? "Deleted" : "Failed to delete"}`);
+      }
+    }
+
+    console.log("");
+  } catch (error) {
+    console.error("\n❌ Force remove failed");
+    console.error("   ", error instanceof Error ? error.message : String(error));
+    console.error("");
+    console.error("   You may need to manually clean up:");
+    console.error(`   - docker rm -f ${instanceName} db-${instanceName}`);
+    console.error(`   - docker volume rm ${instanceName}_pgdata`);
+    console.error(`   - rm -rf /srv/apps/${instanceName}`);
+    process.exit(1);
+  }
 }
 
 async function handleHistory(args: string[]): Promise<void> {
@@ -942,13 +1243,13 @@ async function handleHistory(args: string[]): Promise<void> {
 
   for (let i = 0; i < args.length; i++) {
     if ((args[i] === "--since" || args[i] === "-s") && args[i + 1]) {
-      since = args[i + 1]!;
+      since = args[i + 1];
       i++;
     } else if ((args[i] === "--start-version" || args[i] === "-v") && args[i + 1]) {
-      startVersion = args[i + 1]!;
+      startVersion = args[i + 1];
       i++;
     } else if ((args[i] === "--branch" || args[i] === "-b") && args[i + 1]) {
-      branch = args[i + 1]!;
+      branch = args[i + 1];
       i++;
     }
   }
@@ -1020,7 +1321,7 @@ async function handleHistory(args: string[]): Promise<void> {
     }
     console.log("");
     console.log("   This is a dry run. To actually import, run without --dry:");
-    console.log("     pnpm ship:history" + (isClear ? " --clear" : "") + (since ? ` --since ${since}` : ""));
+    console.log("     " + shipCmd("history") + (isClear ? " --clear" : "") + (since ? ` --since ${since}` : ""));
     console.log("");
     return;
   }
@@ -1064,9 +1365,10 @@ async function handleHistory(args: string[]): Promise<void> {
       });
       clearTimeout(timeout);
 
-      const data = (await response.json()) as Record<string, unknown>;
+      const importUrl = `${config.url}/api/ship/import`;
+      const { ok: importOk, data } = await safeJsonResponse(response, importUrl);
 
-      if (!response.ok) {
+      if (!importOk) {
         throw new Error((data.error as string) || `Server returned ${response.status}`);
       }
 
@@ -1099,14 +1401,15 @@ async function handleHistory(args: string[]): Promise<void> {
   console.log(`   Range:     ${versioned[0].version} → ${versioned[versioned.length - 1].version}`);
   console.log(`   Builds:    #1 → #${versioned.length}`);
   console.log("");
-  console.log("   The next 'pnpm ship' will continue from where this left off.");
+  console.log(`   The next '${shipCmd()}' will continue from where this left off.`);
   console.log(`   View history at: ${config.url}/admin/versions`);
   console.log("");
 }
 
 // ── Self-Update ──────────────────────────────────────────────────────
 
-const ALL_SHIP_SCRIPTS: Record<string, string> = {
+const ALL_PACKAGE_SCRIPTS: Record<string, string> = {
+  // Ship commands (use tsx to run ship.ts)
   ship: "__CLI_PATH__",
   "ship:minor": "__CLI_PATH__ --minor",
   "ship:major": "__CLI_PATH__ --major",
@@ -1114,6 +1417,19 @@ const ALL_SHIP_SCRIPTS: Record<string, string> = {
   "ship:setup": "__CLI_PATH__ setup",
   "ship:history": "__CLI_PATH__ history",
   "ship:update": "__CLI_PATH__ update",
+  "ship:help": "__CLI_PATH__ help",
+  "ship:force-remove": "__CLI_PATH__ force-remove",
+  // Env-sync commands (bash scripts in the same directory)
+  "env:pull": "bash __SCRIPT_DIR__/env-sync.sh pull",
+  "env:push": "bash __SCRIPT_DIR__/env-sync.sh push",
+  "env:diff": "bash __SCRIPT_DIR__/env-sync.sh diff",
+  "env:status": "bash __SCRIPT_DIR__/env-sync.sh status",
+  "env:sync": "bash __SCRIPT_DIR__/env-sync.sh sync",
+  "env:pull:force": "bash __SCRIPT_DIR__/env-sync.sh pull --force",
+  "env:push:force": "bash __SCRIPT_DIR__/env-sync.sh push --force",
+  // Meta commands
+  "tools:update": `curl -sL ${REPO_RAW}/cli/install.sh | bash`,
+  "tools:migrate": `curl -sL ${REPO_RAW}/cli/migrate.sh | bash`,
 };
 
 function ensurePackageJsonScripts(cliRelPath: string): boolean {
@@ -1124,11 +1440,14 @@ function ensurePackageJsonScripts(cliRelPath: string): boolean {
     const pkg = JSON.parse(readFileSync(pkgPath, "utf-8"));
     if (!pkg.scripts) pkg.scripts = {};
 
-    const prefix = `tsx ${cliRelPath}`;
+    const cliPrefix = `tsx ${cliRelPath}`;
+    const scriptDir = path.dirname(cliRelPath);
     let changed = false;
 
-    for (const [name, template] of Object.entries(ALL_SHIP_SCRIPTS)) {
-      const cmd = template.replace("__CLI_PATH__", prefix);
+    for (const [name, template] of Object.entries(ALL_PACKAGE_SCRIPTS)) {
+      const cmd = template
+        .replace(/__CLI_PATH__/g, cliPrefix)
+        .replace(/__SCRIPT_DIR__/g, scriptDir);
       if (pkg.scripts[name] !== cmd) {
         pkg.scripts[name] = cmd;
         changed = true;
@@ -1146,16 +1465,31 @@ function ensurePackageJsonScripts(cliRelPath: string): boolean {
 
 function ensureGitignore(): boolean {
   const gitignorePath = path.join(process.cwd(), ".gitignore");
-  if (!existsSync(gitignorePath)) return false;
+  let content = "";
+  let existed = false;
+
+  if (existsSync(gitignorePath)) {
+    content = readFileSync(gitignorePath, "utf-8");
+    existed = true;
+  }
+
+  const entries = [
+    ".matrx.json",
+    ".matrx-ship.json",
+    ".matrx-tools.conf",
+    ".env-backups/",
+  ];
+
+  const missing = entries.filter((e) => !content.includes(e));
+  if (missing.length === 0) return false;
 
   try {
-    const content = readFileSync(gitignorePath, "utf-8");
-    if (content.includes(".matrx-ship.json")) return false;
-
-    writeFileSync(
-      gitignorePath,
-      content.trimEnd() + "\n\n# Matrx Ship config (contains API key)\n.matrx-ship.json\n",
-    );
+    const addition = "\n# Matrx config (contains API keys)\n" + missing.join("\n") + "\n";
+    if (existed) {
+      writeFileSync(gitignorePath, content.trimEnd() + "\n" + addition);
+    } else {
+      writeFileSync(gitignorePath, addition.trimStart());
+    }
     return true;
   } catch {
     return false;
@@ -1185,9 +1519,218 @@ function ensureTsxDependency(): void {
   }
 }
 
+/**
+ * Download a single file from the GitHub repo. Returns true on success.
+ * Non-fatal: logs a warning on failure so the update can continue.
+ */
+async function downloadFile(url: string, dest: string, label: string): Promise<boolean> {
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 15000);
+    const response = await fetch(url, { signal: controller.signal });
+    clearTimeout(timeout);
+
+    if (!response.ok) {
+      console.log(`   ⚠️  Could not download ${label} (HTTP ${response.status})`);
+      return false;
+    }
+
+    const fileContent = await response.text();
+    const dir = path.dirname(dest);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(dest, fileContent, "utf-8");
+    return true;
+  } catch {
+    console.log(`   ⚠️  Could not download ${label}`);
+    return false;
+  }
+}
+
+/**
+ * Ensure the .matrx.json (unified config) exists and is valid.
+ * - If .matrx.json already exists → validate it
+ * - If only legacy .matrx-ship.json exists → auto-migrate to .matrx.json
+ * - If nothing exists → print clear instructions
+ *
+ * Returns true if config is healthy, false if the user needs to take action.
+ */
+/**
+ * Centralized integrity check:
+ * 1. Migrates legacy configs (.matrx-ship.json, .matrx-tools.conf) → .matrx.json
+ * 2. Prompts to delete legacy files after migration
+ * 3. Validates unified config (Ship + Env)
+ * 4. Interactively prompts for missing values (Doppler config, Env file, etc.)
+ * 5. Cleans up package.json (removes old scripts)
+ * 6. Ensures .gitignore rules
+ */
+async function checkIntegrity(cliPath: string = "cli/ship.ts"): Promise<boolean> {
+  const cwd = process.cwd();
+  const unifiedPath = path.join(cwd, ".matrx.json");
+  const legacyShipPath = path.join(cwd, ".matrx-ship.json");
+  const legacyConfPath = path.join(cwd, ".matrx-tools.conf");
+
+  console.log("🔍 Checking project integrity...");
+
+  // ── 1. Load / Initialize Config ──
+  let config: Record<string, any> = {};
+  if (existsSync(unifiedPath)) {
+    try {
+      config = JSON.parse(readFileSync(unifiedPath, "utf-8"));
+    } catch {
+      console.log("   ⚠️  .matrx.json exists but is invalid — treating as empty");
+      config = {};
+    }
+  }
+
+  // ── 2. Migration Logic ──
+  let migrated = false;
+
+  // Migrate .matrx-ship.json
+  if (existsSync(legacyShipPath)) {
+    try {
+      const legacy = JSON.parse(readFileSync(legacyShipPath, "utf-8"));
+      if (legacy.url && legacy.apiKey && (!config.ship || !config.ship.url)) {
+        config.ship = { url: legacy.url, apiKey: legacy.apiKey };
+        migrated = true;
+        console.log("   ✅ Migrated ship config from .matrx-ship.json");
+      }
+
+      // Prompt to delete
+      const ans = await promptUser("Delete legacy .matrx-ship.json? (y/n)", "y");
+      if (ans.toLowerCase().startsWith("y")) {
+        try { unlinkSync(legacyShipPath); console.log("   🗑️  Deleted .matrx-ship.json"); } catch { }
+      }
+    } catch { }
+  }
+
+  // Migrate .matrx-tools.conf
+  if (existsSync(legacyConfPath)) {
+    try {
+      const confContent = readFileSync(legacyConfPath, "utf-8");
+      const getVal = (key: string) => {
+        const m = confContent.match(new RegExp(`^${key}="?([^"\\n]*)"?`, "m"));
+        return m ? m[1] : "";
+      };
+
+      const dp = getVal("DOPPLER_PROJECT");
+      const dc = getVal("DOPPLER_CONFIG");
+      const ef = getVal("ENV_FILE");
+
+      if (dp && (!config.env || !config.env.doppler)) {
+        config.env = {
+          doppler: { project: dp, config: dc || "dev" },
+          file: ef || ".env",
+        };
+        migrated = true;
+        console.log("   ✅ Migrated env config from .matrx-tools.conf");
+      }
+
+      const ans = await promptUser("Delete legacy .matrx-tools.conf? (y/n)", "y");
+      if (ans.toLowerCase().startsWith("y")) {
+        try { unlinkSync(legacyConfPath); console.log("   🗑️  Deleted .matrx-tools.conf"); } catch { }
+      }
+    } catch { }
+  }
+
+  // ── 3. Validation & Interactive Setup ──
+  let needsSave = migrated;
+
+  // Extract defaults from current config or detention
+  const current = {
+    shipUrl: config.ship?.url || "",
+    shipKey: config.ship?.apiKey || "",
+    dopplerProject: config.env?.doppler?.project || detectProjectName(),
+    dopplerConfig: config.env?.doppler?.config || "dev",
+    envFile: config.env?.file || detectEnvFile(),
+  };
+
+  const isShipOk = current.shipUrl && current.shipKey && !isPlaceholderKey(current.shipKey);
+  const isEnvOk = !!(config.env && config.env.doppler && config.env.file);
+
+  if (!isShipOk) {
+    console.log("   ⚠️  Ship configuration missing or incomplete.");
+    current.shipUrl = await promptUser("Ship URL", current.shipUrl);
+    current.shipKey = await promptUser("Ship API Key", current.shipKey);
+    needsSave = true;
+  }
+
+  // If env is missing or incomplete, prompt effectively
+  if (!isEnvOk) {
+    // Check if we should prompt
+    if (!config.env) {
+      console.log("");
+      console.log("   📋 Env-sync setup (syncs local .env with Doppler)");
+      const setupEnv = await promptUser("Configure env-sync? (y/n)", "y");
+      if (setupEnv.toLowerCase().startsWith("y")) {
+        current.dopplerProject = await promptUser("Doppler Project", current.dopplerProject);
+        current.dopplerConfig = await promptUser("Doppler Config", current.dopplerConfig);
+        current.envFile = await promptUser("Env File", current.envFile);
+
+        config.env = {
+          doppler: { project: current.dopplerProject, config: current.dopplerConfig },
+          file: current.envFile
+        };
+        needsSave = true;
+      }
+    }
+  }
+
+  if (needsSave) {
+    config.ship = { url: current.shipUrl, apiKey: current.shipKey };
+    // env already updated
+    writeFileSync(unifiedPath, JSON.stringify(config, null, 2) + "\n");
+    console.log("   ✅ Updated .matrx.json");
+  } else {
+    console.log("   ✓  Config (.matrx.json) is valid");
+  }
+
+  // ── 4. Package.json Cleanup ──
+  const pkgPath = path.join(cwd, "package.json");
+  if (existsSync(pkgPath)) {
+    try {
+      const pkg = JSON.parse(readFileSync(pkgPath, "utf-8"));
+      if (pkg.scripts) {
+        const obsolete = ["deploy", "release", "ship-old"];
+        let pkgChanged = false;
+        for (const s of obsolete) {
+          if (pkg.scripts[s]) {
+            delete pkg.scripts[s];
+            console.log(`   🗑️  Removed deprecated script: ${s}`);
+            pkgChanged = true;
+          }
+        }
+        if (pkgChanged) {
+          writeFileSync(pkgPath, JSON.stringify(pkg, null, 2) + "\n");
+          console.log("   ✅ Cleaned up package.json (removed obsolete scripts)");
+        }
+      }
+    } catch { }
+  }
+
+  // ── 5. Gitignore Cleanup ──
+  const gitignorePath = path.join(cwd, ".gitignore");
+  if (existsSync(gitignorePath)) {
+    try {
+      let content = readFileSync(gitignorePath, "utf-8");
+      const required = [".matrx.json", ".matrx-ship.json", ".matrx-tools.conf", ".env-backups/"];
+      const missing = required.filter(r => !content.includes(r));
+      if (missing.length > 0) {
+        content = content.trimEnd() + "\n\n# Matrx Config\n" + missing.join("\n") + "\n";
+        writeFileSync(gitignorePath, content);
+        console.log("   ✅ Updated .gitignore");
+      }
+    } catch { }
+  }
+
+  console.log("   ✨ Project integrity verified");
+  console.log("");
+  return true;
+}
+
 async function handleUpdate(): Promise<void> {
   console.log("");
   console.log("🔄 Updating Matrx Ship CLI...");
+  console.log("══════════════════════════════════════════");
   console.log("");
 
   // Determine where the current script lives
@@ -1197,11 +1740,14 @@ async function handleUpdate(): Promise<void> {
   const relPath = path.relative(cwd, currentScript);
   const hasPackageJson = existsSync(path.join(cwd, "package.json"));
 
-  console.log(`   Script:  ${relPath}`);
+  console.log(`   Script directory: ${path.relative(cwd, scriptDir) || "."}`);
+  console.log("");
 
-  // Download the latest ship.ts
-  console.log("   Downloading latest CLI from GitHub...");
-  let content!: string;
+  // ── Step 1: Download all CLI files ──
+  console.log("📥 Step 1/5: Downloading latest CLI files...");
+
+  // Always download ship.ts (the core CLI)
+  let shipTsOk = false;
   try {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 15000);
@@ -1213,81 +1759,127 @@ async function handleUpdate(): Promise<void> {
     if (!response.ok) {
       throw new Error(`GitHub returned ${response.status}: ${response.statusText}`);
     }
-    content = await response.text();
+    const shipContent = await response.text();
 
-    if (!content.includes("Matrx Ship CLI")) {
+    if (!shipContent.includes("Matrx Ship CLI")) {
       throw new Error("Downloaded file doesn't look like the ship CLI");
     }
+
+    mkdirSync(scriptDir, { recursive: true });
+    writeFileSync(currentScript, shipContent, "utf-8");
+    console.log("   ✅ ship.ts");
+    shipTsOk = true;
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error);
-    console.error(`❌ Failed to download update`);
+    console.error("   ❌ Failed to download ship.ts");
     if (msg.includes("abort")) {
-      console.error("   Connection timed out. Check your internet connection.");
+      console.error("      Connection timed out. Check your internet connection.");
     } else {
-      console.error(`   ${msg}`);
+      console.error(`      ${msg}`);
     }
     process.exit(1);
   }
 
-  // Ensure directory exists and write the file
-  mkdirSync(scriptDir, { recursive: true });
-  writeFileSync(currentScript, content, "utf-8");
-  console.log("   ✅ CLI script updated");
+  // Download env-sync.sh
+  const envSyncPath = path.join(scriptDir, "env-sync.sh");
+  const envSyncOk = await downloadFile(
+    `${REPO_RAW}/cli/env-sync.sh`,
+    envSyncPath,
+    "env-sync.sh",
+  );
+  if (envSyncOk) {
+    try { execSync(`chmod +x "${envSyncPath}"`, { stdio: "ignore" }); } catch { /* Windows */ }
+    console.log("   ✅ env-sync.sh");
+  }
+
+  // Download lib files
+  const libDir = path.join(scriptDir, "lib");
+  const colorsOk = await downloadFile(
+    `${REPO_RAW}/cli/lib/colors.sh`,
+    path.join(libDir, "colors.sh"),
+    "lib/colors.sh",
+  );
+  if (colorsOk) console.log("   ✅ lib/colors.sh");
+
+  const utilsOk = await downloadFile(
+    `${REPO_RAW}/cli/lib/utils.sh`,
+    path.join(libDir, "utils.sh"),
+    "lib/utils.sh",
+  );
+  if (utilsOk) console.log("   ✅ lib/utils.sh");
 
   // For non-Node projects, also update the bash wrapper
   if (!hasPackageJson) {
-    console.log("   Downloading latest bash wrapper...");
-    try {
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 15000);
-      const response = await fetch(`${REPO_RAW}/cli/ship.sh`, {
-        signal: controller.signal,
-      });
-      clearTimeout(timeout);
-
-      if (response.ok) {
-        const wrapperContent = await response.text();
-        const wrapperPath = path.join(scriptDir, "ship.sh");
-        writeFileSync(wrapperPath, wrapperContent, "utf-8");
-        try {
-          execSync(`chmod +x "${wrapperPath}"`, { stdio: "ignore" });
-        } catch {
-          // Windows doesn't have chmod
-        }
-        console.log("   ✅ Bash wrapper updated");
-      }
-    } catch {
-      console.log("   ⚠️  Could not update bash wrapper (ship.sh)");
+    const wrapperPath = path.join(scriptDir, "ship.sh");
+    const wrapperOk = await downloadFile(
+      `${REPO_RAW}/cli/ship.sh`,
+      wrapperPath,
+      "ship.sh",
+    );
+    if (wrapperOk) {
+      try { execSync(`chmod +x "${wrapperPath}"`, { stdio: "ignore" }); } catch { /* Windows */ }
+      console.log("   ✅ ship.sh");
     }
-  }
-
-  if (hasPackageJson) {
-    // Ensure package.json has all ship:* scripts
-    const scriptsUpdated = ensurePackageJsonScripts(relPath);
-    if (scriptsUpdated) {
-      console.log("   ✅ package.json scripts updated");
-    } else {
-      console.log("   ✓  package.json scripts already up to date");
-    }
-
-    // Ensure tsx is installed
-    ensureTsxDependency();
-  }
-
-  // Ensure .gitignore has .matrx-ship.json
-  const gitignoreUpdated = ensureGitignore();
-  if (gitignoreUpdated) {
-    console.log("   ✅ Added .matrx-ship.json to .gitignore");
   }
 
   console.log("");
-  console.log("   ✅ Matrx Ship CLI is up to date!");
+
+  // ── Step 2: Register commands ──
+  console.log("📋 Step 2/5: Registering commands...");
+
   if (hasPackageJson) {
-    console.log("   Run 'pnpm ship help' to see all commands.");
+    const scriptsUpdated = ensurePackageJsonScripts(relPath);
+    if (scriptsUpdated) {
+      console.log("   ✅ package.json scripts updated (ship + env + tools)");
+    } else {
+      console.log("   ✓  package.json scripts already up to date");
+    }
   } else {
-    const wrapperRel = path.relative(cwd, path.join(scriptDir, "ship.sh"));
-    console.log(`   Run 'bash ${wrapperRel} help' to see all commands.`);
+    // TODO: update Makefile targets for non-Node projects
+    console.log("   ✓  Non-Node project (use Makefile or bash scripts directly)");
   }
+  console.log("");
+
+  // ── Step 3: Ensure dependencies ──
+  console.log("📦 Step 3/5: Checking dependencies...");
+
+  if (hasPackageJson) {
+    ensureTsxDependency();
+    console.log("   ✓  tsx dependency OK");
+  } else {
+    // Check for npx + tsx availability
+    try {
+      execSync("npx tsx --version", { stdio: "ignore" });
+      console.log("   ✓  npx tsx available");
+    } catch {
+      console.log("   ⚠️  npx tsx not found. Install Node.js for Ship CLI.");
+    }
+  }
+  console.log("");
+
+  // ── Step 4: Validate config ──
+  console.log("🔧 Step 4/5: Integrity Check & Cleanup...");
+  const configOk = await checkIntegrity();
+  console.log("");
+
+  // ── Step 5: Gitignore ──
+  console.log("📄 Step 5/5: Checking .gitignore...");
+  const gitignoreUpdated = ensureGitignore();
+  if (gitignoreUpdated) {
+    console.log("   ✅ Updated .gitignore with config entries");
+  } else {
+    console.log("   ✓  .gitignore already up to date");
+  }
+
+  // ── Summary ──
+  console.log("");
+  console.log("══════════════════════════════════════════");
+  if (configOk) {
+    console.log("✅ Matrx Ship CLI is fully up to date!");
+  } else {
+    console.log("⚠️  CLI files updated, but configuration needs attention (see above).");
+  }
+  console.log(`   Run '${shipCmd("help")}' to see all commands.`);
   console.log("");
 }
 
@@ -1303,58 +1895,61 @@ async function main() {
     await handleInit(args.slice(1));
   } else if (command === "history") {
     await handleHistory(args.slice(1));
+  } else if (command === "force-remove") {
+    await handleForceRemove(args.slice(1));
   } else if (command === "update") {
     await handleUpdate();
   } else if (command === "status") {
     const config = loadConfig();
     await getStatus(config);
   } else if (command === "help" || command === "--help" || command === "-h") {
-    const hasPackageJson = existsSync(path.join(process.cwd(), "package.json"));
-
-    // Build command examples that match the invocation style
-    const cmd = (sub: string) =>
-      hasPackageJson ? `pnpm ship:${sub}` : `bash scripts/matrx/ship.sh ${sub}`;
-    const ship = hasPackageJson ? "pnpm ship" : "bash scripts/matrx/ship.sh";
-    const minor = hasPackageJson ? "pnpm ship:minor" : `${ship} --minor`;
-    const major = hasPackageJson ? "pnpm ship:major" : `${ship} --major`;
+    // Use shipCmd() for all command examples — auto-detects pnpm vs make vs bash
+    const cmd = shipCmd;
+    const env = envCmd;
+    const ship = cmd();
+    const minor = cmd("minor");
+    const major = cmd("major");
 
     console.log(`
-Matrx Ship CLI - Universal Deployment Tool
+Matrx CLI - Ship + Env-Sync + Tools
+════════════════════════════════════════
 
-Usage:
+🚀 Ship (version tracking + deploy):
   ${ship} "commit message"                  Patch version bump + deploy
   ${minor} "commit message"                 Minor version bump + deploy
   ${major} "commit message"                 Major version bump + deploy
+  ${ship} status                            Show current version from server
 
-Setup Commands:
+🔐 Env-Sync (Doppler secret management):
+  ${env("status")}                          Quick summary of sync state
+  ${env("diff")}                            Show differences (local vs Doppler)
+  ${env("pull")}                            Safe merge from Doppler → local
+  ${env("push")}                            Safe merge from local → Doppler
+  ${env("sync")}                            Interactive per-key conflict resolution
+  ${env("pull:force")}                      Full replace local from Doppler
+  ${env("push:force")}                      Full replace Doppler from local
+
+⚙️  Setup:
   ${cmd("setup")} --token TOKEN             Save server credentials (one-time per machine)
-  ${cmd("init")} PROJECT "Display Name"     Auto-provision an instance on the server
+  ${cmd("init")} PROJECT "Display Name"     Auto-provision a Ship instance
   ${cmd("init")} --url URL --key KEY        Manual config (provide your own URL + key)
 
-History:
+📚 History:
   ${cmd("history")}                         Import full git history into ship
   ${cmd("history")} --dry                   Preview what would be imported
   ${cmd("history")} --clear                 Clear existing versions and reimport
   ${cmd("history")} --since 2024-01-01      Only import commits after a date
-  ${cmd("history")} --branch main           Import from a specific branch
 
-Maintenance:
-  ${cmd("update")}                          Update CLI to the latest version
-  ${ship} status                            Show current version from server
+🔧 Maintenance:
+  ${cmd("update")}                          Update CLI + integrity check + cleanup
+  ${cmd("force-remove")} INSTANCE           Forcefully remove a broken instance
   ${ship} help                              Show this help
 
-Environment Variables:
+📋 Environment Variables:
   MATRX_SHIP_SERVER_TOKEN   Server token for provisioning (or use ${cmd("setup")})
   MATRX_SHIP_SERVER         MCP server URL (default: ${DEFAULT_MCP_SERVER})
-  MATRX_SHIP_URL            Instance URL (overrides .matrx-ship.json)
-  MATRX_SHIP_API_KEY        Instance API key (overrides .matrx-ship.json)
-
-Quick Start:
-  1. One-time: ${cmd("setup")} --token YOUR_SERVER_TOKEN
-  2. Per project: ${cmd("init")} my-project "My Project"
-  3. Import history: ${cmd("history")}
-  4. Ship: ${ship} "your commit message"
-  5. Update CLI: ${cmd("update")}
+  MATRX_SHIP_URL            Instance URL (overrides config)
+  MATRX_SHIP_API_KEY        Instance API key (overrides config)
 `);
   } else {
     await handleShip(args);
