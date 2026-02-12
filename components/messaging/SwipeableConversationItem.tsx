@@ -1,6 +1,5 @@
 "use client";
 
-import { cn } from "@/lib/cn";
 import { motion, useMotionValue, useTransform } from "framer-motion";
 import { Pin, BellOff, Trash2 } from "lucide-react";
 import { ConversationListItem } from "./ConversationListItem";

@@ -5,7 +5,6 @@ import { createClient } from "@/lib/supabase/client";
 import type { TypingEvent } from "@/lib/types";
 
 const TYPING_TIMEOUT = 3000;
-const DEBOUNCE_MS = 300;
 
 export function useTypingIndicator(
   conversationId: string | null,

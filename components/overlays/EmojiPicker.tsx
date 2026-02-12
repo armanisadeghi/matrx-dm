@@ -52,17 +52,16 @@ type EmojiPickerProps = {
 export function EmojiPicker({ onSelect, onClose, className }: EmojiPickerProps) {
   const [search, setSearch] = useState("");
   const [activeCategory, setActiveCategory] = useState(0);
-  const [recentEmojis, setRecentEmojis] = useState<string[]>([]);
-  const containerRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
+  const [recentEmojis, setRecentEmojis] = useState<string[]>(() => {
     try {
-      const stored = localStorage.getItem(RECENT_KEY);
-      if (stored) setRecentEmojis(JSON.parse(stored));
+      const stored = typeof window !== "undefined" ? localStorage.getItem(RECENT_KEY) : null;
+      if (stored) return JSON.parse(stored) as string[];
     } catch {
       // localStorage unavailable
     }
-  }, []);
+    return [];
+  });
+  const containerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
@@ -96,17 +95,7 @@ export function EmojiPicker({ onSelect, onClose, className }: EmojiPickerProps) 
     }
   }
 
-  const searchLower = search.toLowerCase();
-  const filteredCategories = search
-    ? CATEGORIES.map((cat) => ({
-        ...cat,
-        emojis: cat.emojis.filter(() => {
-          // Simple substring search on the emoji itself
-          // For a production app, you'd have a name mapping
-          return true;
-        }),
-      })).filter((cat) => cat.emojis.length > 0)
-    : CATEGORIES;
+  const filteredCategories = search ? CATEGORIES : CATEGORIES;
 
   return (
     <div
@@ -156,7 +145,7 @@ export function EmojiPicker({ onSelect, onClose, className }: EmojiPickerProps) 
         )}
 
         {/* Categories */}
-        {(search ? filteredCategories : CATEGORIES).map((cat, idx) => (
+        {filteredCategories.map((cat) => (
           <div key={cat.name} className="mb-2">
             <span className="mb-1 block px-1 text-xs font-medium text-text-tertiary">
               {cat.name}

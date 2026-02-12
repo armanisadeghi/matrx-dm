@@ -209,7 +209,9 @@ function getCodeStats(): { linesAdded: number; linesDeleted: number; filesChange
 
     if (stats) {
       for (const line of stats.split("\n")) {
-        const [added, deleted] = line.trim().split(/\s+/);
+        const parts = line.trim().split(/\s+/);
+        const added = parts[0] ?? "-";
+        const deleted = parts[1] ?? "-";
         if (added !== "-" && deleted !== "-") {
           linesAdded += parseInt(added) || 0;
           linesDeleted += parseInt(deleted) || 0;
@@ -422,10 +424,10 @@ async function handleSetup(args: string[]): Promise<void> {
 
   for (let i = 0; i < args.length; i++) {
     if ((args[i] === "--token" || args[i] === "-t") && args[i + 1]) {
-      token = args[i + 1];
+      token = args[i + 1]!;
       i++;
     } else if ((args[i] === "--server" || args[i] === "-s") && args[i + 1]) {
-      server = args[i + 1];
+      server = args[i + 1]!;
       i++;
     }
   }
@@ -497,10 +499,10 @@ async function handleInit(args: string[]): Promise<void> {
   const positional: string[] = [];
   for (let i = 0; i < args.length; i++) {
     if ((args[i] === "--token" || args[i] === "-t") && args[i + 1]) {
-      tokenOverride = args[i + 1];
+      tokenOverride = args[i + 1]!;
       i++;
     } else if ((args[i] === "--server" || args[i] === "-s") && args[i + 1]) {
-      serverOverride = args[i + 1];
+      serverOverride = args[i + 1]!;
       i++;
     } else if (!args[i].startsWith("--")) {
       positional.push(args[i]);
@@ -698,10 +700,10 @@ async function handleLegacyInit(args: string[]): Promise<void> {
 
   for (let i = 0; i < args.length; i++) {
     if (args[i] === "--url" && args[i + 1]) {
-      url = args[i + 1];
+      url = args[i + 1]!;
       i++;
     } else if (args[i] === "--key" && args[i + 1]) {
-      key = args[i + 1];
+      key = args[i + 1]!;
       i++;
     }
   }
@@ -918,7 +920,8 @@ function assignVersions(
   entries: GitCommitEntry[],
   startVersion: string,
 ): { version: string; buildNumber: number; entry: GitCommitEntry }[] {
-  let [major, minor, patch] = startVersion.split(".").map(Number);
+  const [major, minor] = startVersion.split(".").map(Number);
+  let patch = Number(startVersion.split(".")[2]);
   return entries.map((entry, i) => {
     if (i > 0) patch++;
     return {
@@ -939,13 +942,13 @@ async function handleHistory(args: string[]): Promise<void> {
 
   for (let i = 0; i < args.length; i++) {
     if ((args[i] === "--since" || args[i] === "-s") && args[i + 1]) {
-      since = args[i + 1];
+      since = args[i + 1]!;
       i++;
     } else if ((args[i] === "--start-version" || args[i] === "-v") && args[i + 1]) {
-      startVersion = args[i + 1];
+      startVersion = args[i + 1]!;
       i++;
     } else if ((args[i] === "--branch" || args[i] === "-b") && args[i + 1]) {
-      branch = args[i + 1];
+      branch = args[i + 1]!;
       i++;
     }
   }
