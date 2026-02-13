@@ -172,11 +172,8 @@ export function useRealtimeMessages(conversationId: string | null) {
           const parent = messageMap.get(m.reply_to_id);
           if (parent) {
             replyTo = {
-              id: parent.id,
-              content: parent.content,
-              type: parent.type,
-              sender_id: parent.sender_id,
-              sender: parent.sender as unknown as { id: string; display_name: string },
+              ...parent,
+              sender: parent.sender as unknown as Pick<MessageWithSender["sender"], "id" | "display_name">,
             };
           }
         }
