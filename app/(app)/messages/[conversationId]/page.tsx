@@ -59,22 +59,26 @@ export default async function ConversationPage({ params }: Props) {
   let avatarUrl = conversation.avatar_url;
 
   if (conversation.type === "direct") {
-    const { data: otherParticipants } = await supabase
+    // Get the other participant's user_id
+    const { data: otherParticipantRows } = await supabase
       .from("conversation_participants")
-      .select(
-        "user_id, profiles:profiles!conversation_participants_user_id_fkey(display_name, avatar_url)"
-      )
+      .select("user_id")
       .eq("conversation_id", conversationId)
       .neq("user_id", user.id);
 
-    if (otherParticipants?.[0]) {
-      const other = otherParticipants[0].profiles as unknown as {
-        display_name: string;
-        avatar_url: string | null;
-      };
-      if (other) {
-        displayName = other.display_name;
-        avatarUrl = other.avatar_url;
+    const otherUserId = otherParticipantRows?.[0]?.user_id;
+
+    if (otherUserId) {
+      // Fetch their profile directly
+      const { data: profile } = await supabase
+        .from("profiles")
+        .select("display_name, avatar_url")
+        .eq("id", otherUserId)
+        .single();
+
+      if (profile) {
+        displayName = profile.display_name;
+        avatarUrl = profile.avatar_url;
       }
     }
   }
