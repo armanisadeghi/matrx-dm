@@ -93,16 +93,8 @@ export function ConversationView({
   }
 
   return (
-    <div className="relative flex h-full flex-col">
-      <ConversationHeader
-        name={conversationName}
-        avatarUrl={avatarUrl}
-        conversationId={conversationId}
-        conversationType={conversationType}
-        memberCount={memberCount}
-        typingUsers={typingUsers}
-      />
-
+    <div className="relative flex h-full flex-col overflow-hidden">
+      {/* Messages fill the entire space — header & footer float on top */}
       {messages.length === 0 ? (
         isFetched ? (
           /* Empty conversation — ready for the first message */
@@ -134,15 +126,34 @@ export function ConversationView({
         <MessageThread
           messages={messages}
           currentUserId={user.id}
+          className="pt-20 pb-16"
         />
       )}
 
-      <TypingIndicator typingUsers={typingUsers} />
-      <MessageInput onSend={handleSend} onTyping={handleTyping} />
+      {/* Floating overlay layer — pointer-events-none so messages scroll through */}
+      <div className="pointer-events-none absolute inset-0 z-10">
+        {/* Header — fades from bg to transparent */}
+        <ConversationHeader
+          name={conversationName}
+          avatarUrl={avatarUrl}
+          conversationId={conversationId}
+          conversationType={conversationType}
+          memberCount={memberCount}
+          typingUsers={typingUsers}
+        />
+
+        {/* Typing indicator */}
+        <div className="pointer-events-auto absolute inset-x-0 bottom-14 z-20">
+          <TypingIndicator typingUsers={typingUsers} />
+        </div>
+
+        {/* Input — fades from bg to transparent */}
+        <MessageInput onSend={handleSend} onTyping={handleTyping} />
+      </div>
 
       {/* Connection status banner */}
       {!isConnected && messages.length > 0 && (
-        <div className="absolute top-16 left-1/2 -translate-x-1/2 z-30">
+        <div className="absolute top-20 left-1/2 -translate-x-1/2 z-30">
           <div className="flex items-center gap-2 rounded-full glass px-3 py-1.5 shadow-lg">
             <Spinner size="sm" />
             <span className="text-xs font-medium text-text-secondary">

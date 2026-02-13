@@ -3,9 +3,9 @@
 import { cn } from "@/lib/cn";
 import { useState, useEffect, useRef } from "react";
 import { useRouter, useParams } from "next/navigation";
-import { SquarePen } from "lucide-react";
+import { SquarePen, SlidersHorizontal, Check } from "lucide-react";
 import { SearchBar } from "./SearchBar";
-import { IconButton } from "@/components/ui";
+import { Avatar, IconButton } from "@/components/ui";
 import { ConversationListItem } from "@/components/messaging/ConversationListItem";
 import { NewConversationSheet } from "@/components/messaging/NewConversationSheet";
 import {
@@ -18,6 +18,7 @@ import {
   BellOff,
   MailOpen,
   Trash2,
+  ExternalLink,
 } from "lucide-react";
 import type { ConversationWithDetails, ConversationFilter } from "@/lib/types";
 import {
@@ -33,7 +34,7 @@ type SidebarProps = {
 };
 
 const FILTERS: { label: string; value: ConversationFilter }[] = [
-  { label: "All", value: "all" },
+  { label: "All Messages", value: "all" },
   { label: "Unread", value: "unread" },
   { label: "Groups", value: "groups" },
 ];
@@ -42,6 +43,8 @@ export function Sidebar({ conversations, className }: SidebarProps) {
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<ConversationFilter>("all");
   const [newConvOpen, setNewConvOpen] = useState(false);
+  const [filterMenuOpen, setFilterMenuOpen] = useState(false);
+  const filterMenuRef = useRef<HTMLDivElement>(null);
   const router = useRouter();
   const params = useParams();
   const activeId = params?.conversationId as string | undefined;
@@ -89,6 +92,30 @@ export function Sidebar({ conversations, className }: SidebarProps) {
     };
   }, []);
 
+  // Close filter menu on outside click
+  useEffect(() => {
+    if (!filterMenuOpen) return;
+
+    function handleClick(e: MouseEvent) {
+      if (
+        filterMenuRef.current &&
+        !filterMenuRef.current.contains(e.target as Node)
+      ) {
+        setFilterMenuOpen(false);
+      }
+    }
+    function handleEscape(e: KeyboardEvent) {
+      if (e.key === "Escape") setFilterMenuOpen(false);
+    }
+
+    document.addEventListener("mousedown", handleClick);
+    document.addEventListener("keydown", handleEscape);
+    return () => {
+      document.removeEventListener("mousedown", handleClick);
+      document.removeEventListener("keydown", handleEscape);
+    };
+  }, [filterMenuOpen]);
+
   const filtered = conversations.filter((c) => {
     if (search) {
       const q = search.toLowerCase();
@@ -105,6 +132,9 @@ export function Sidebar({ conversations, className }: SidebarProps) {
 
   const pinned = filtered.filter((c) => c.is_pinned);
   const unpinned = filtered.filter((c) => !c.is_pinned);
+
+  // Limit pinned avatars to 3
+  const pinnedAvatars = pinned.slice(0, 3);
 
   async function handleDelete(conversationId: string) {
     // Optimistic: remove from sidebar immediately
@@ -131,15 +161,26 @@ export function Sidebar({ conversations, className }: SidebarProps) {
             onClick: () => togglePin(conv.conversation_id),
           },
           {
-            label: conv.is_muted ? "Unmute" : "Mute",
-            icon: BellOff,
-            onClick: () => toggleMute(conv.conversation_id),
-          },
-          {
             label: "Mark as Read",
             icon: MailOpen,
             onClick: () => {
               /* handled by markRead */
+            },
+          },
+          {
+            label: conv.is_muted ? "Unmute" : "Hide Alerts",
+            icon: BellOff,
+            onClick: () => toggleMute(conv.conversation_id),
+          },
+        ],
+      },
+      {
+        items: [
+          {
+            label: "Open in New Window",
+            icon: ExternalLink,
+            onClick: () => {
+              window.open(`/messages/${conv.conversation_id}`, "_blank");
             },
           },
         ],
@@ -160,13 +201,57 @@ export function Sidebar({ conversations, className }: SidebarProps) {
   return (
     <aside
       className={cn(
-        "flex h-full w-full flex-col bg-bg-primary lg:w-[320px] lg:border-r lg:border-border-subtle",
+        "flex h-full w-full flex-col bg-bg-primary sm:w-[280px] sm:border-r sm:border-border-subtle",
         className
       )}
     >
       {/* Header */}
       <div className="flex items-center justify-between px-4 pt-4 pb-2 safe-top">
+        {/* Left: Filter icon */}
+        <div className="relative" ref={filterMenuRef}>
+          <IconButton
+            icon={SlidersHorizontal}
+            label="Filter conversations"
+            size="sm"
+            variant="ghost"
+            onClick={() => setFilterMenuOpen((prev) => !prev)}
+            className={filter !== "all" ? "text-accent" : undefined}
+          />
+
+          {/* Filter dropdown */}
+          {filterMenuOpen && (
+            <div className="absolute top-full left-0 z-50 mt-1 min-w-[180px] rounded-2xl py-1.5 shadow-2xl glass animate-spring-scale origin-top-left">
+              {FILTERS.map((f) => (
+                <button
+                  key={f.value}
+                  type="button"
+                  onClick={() => {
+                    setFilter(f.value);
+                    setFilterMenuOpen(false);
+                  }}
+                  className={cn(
+                    "flex w-full items-center justify-between gap-2 px-3.5 py-2.5 text-sm",
+                    "cursor-pointer transition-colors duration-[var(--duration-fast)]",
+                    "text-text-primary hover:bg-bg-tertiary/50"
+                  )}
+                >
+                  {f.label}
+                  {filter === f.value && (
+                    <Check
+                      size={16}
+                      strokeWidth={2}
+                      className="text-accent"
+                    />
+                  )}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+
         <h2 className="text-xl font-semibold text-text-primary">Messages</h2>
+
+        {/* Right: New conversation */}
         <IconButton
           icon={SquarePen}
           label="New conversation"
@@ -181,50 +266,57 @@ export function Sidebar({ conversations, className }: SidebarProps) {
         <SearchBar ref={searchBarRef} value={search} onChange={setSearch} />
       </div>
 
-      {/* Filters */}
-      <div className="flex gap-1 px-4 pb-3">
-        {FILTERS.map((f) => (
-          <button
-            key={f.value}
-            type="button"
-            onClick={() => setFilter(f.value)}
-            className={cn(
-              "rounded-full px-3 py-1 text-xs font-medium",
-              "cursor-pointer transition-colors duration-[var(--duration-fast)]",
-              filter === f.value
-                ? "bg-accent text-white"
-                : "bg-bg-secondary text-text-secondary hover:bg-bg-tertiary"
-            )}
-          >
-            {f.label}
-          </button>
-        ))}
-      </div>
-
-      {/* Conversation list */}
-      <div className="flex-1 overflow-y-auto scrollbar-hide px-2">
-        {/* Pinned section */}
-        {pinned.length > 0 && (
-          <div className="mb-1">
-            <span className="px-2 text-xs font-medium text-text-tertiary">
-              Pinned
-            </span>
-            {pinned.map((c) => (
-              <ConversationListItem
+      {/* Pinned avatars row */}
+      {pinnedAvatars.length > 0 && (
+        <div className="flex items-center justify-center gap-5 border-b border-border-subtle px-4 pb-3 pt-1">
+          {pinnedAvatars.map((c) => {
+            const displayName =
+              c.conversation_name || "Unknown";
+            return (
+              <button
                 key={c.conversation_id}
-                conversation={c}
-                isActive={activeId === c.conversation_id}
+                type="button"
                 onClick={() =>
                   router.push(`/messages/${c.conversation_id}`)
                 }
                 onContextMenu={(e) => contextMenu.open(e, c)}
-              />
-            ))}
-          </div>
-        )}
+                className={cn(
+                  "flex cursor-pointer flex-col items-center gap-1",
+                  "transition-transform duration-[var(--duration-fast)] active:scale-95"
+                )}
+              >
+                <Avatar
+                  src={c.conversation_avatar_url}
+                  displayName={displayName}
+                  userId={c.conversation_id}
+                  size="lg"
+                />
+                <span className="max-w-[56px] truncate text-[10px] text-text-secondary">
+                  {displayName.split(" ")[0]}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      )}
 
-        {/* All conversations */}
+      {/* Conversation list */}
+      <div className="flex-1 overflow-y-auto scrollbar-hide px-2">
+        {/* All conversations (unpinned shown here, pinned already shown as avatars) */}
         {unpinned.map((c) => (
+          <ConversationListItem
+            key={c.conversation_id}
+            conversation={c}
+            isActive={activeId === c.conversation_id}
+            onClick={() =>
+              router.push(`/messages/${c.conversation_id}`)
+            }
+            onContextMenu={(e) => contextMenu.open(e, c)}
+          />
+        ))}
+
+        {/* Also show pinned ones with more than 3 in the list */}
+        {pinned.slice(3).map((c) => (
           <ConversationListItem
             key={c.conversation_id}
             conversation={c}

@@ -2,6 +2,7 @@
 
 import { cn } from "@/lib/cn";
 import { IconButton } from "@/components/ui";
+import { EmojiPicker } from "@/components/overlays/EmojiPicker";
 import { Plus, Send, Smile, X } from "lucide-react";
 import { useRef, useState } from "react";
 
@@ -23,6 +24,7 @@ export function MessageInput({
   className,
 }: MessageInputProps) {
   const [value, setValue] = useState("");
+  const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   function handleSubmit() {
@@ -55,10 +57,30 @@ export function MessageInput({
     el.style.height = `${Math.min(el.scrollHeight, maxHeight)}px`;
   }
 
+  function handleEmojiSelect(emoji: string) {
+    setValue((prev) => prev + emoji);
+    textareaRef.current?.focus();
+  }
+
   const hasContent = value.trim().length > 0;
 
   return (
-    <div className={cn("border-t border-border-subtle bg-bg-primary safe-bottom", className)}>
+    <div
+      className={cn("pointer-events-auto absolute inset-x-0 bottom-0 z-20 safe-bottom", className)}
+      style={{
+        background: "linear-gradient(to top, var(--bg-primary) 0%, var(--bg-primary) 40%, transparent 100%)",
+      }}
+    >
+      {/* Emoji picker — positioned above the input */}
+      {showEmojiPicker && (
+        <div className="absolute right-2 bottom-full mb-2 z-50">
+          <EmojiPicker
+            onSelect={handleEmojiSelect}
+            onClose={() => setShowEmojiPicker(false)}
+          />
+        </div>
+      )}
+
       {/* Reply bar */}
       {replyTo && (
         <div className="flex items-center gap-2 border-b border-border-subtle px-4 py-2">
@@ -82,10 +104,10 @@ export function MessageInput({
       )}
 
       {/* Input row */}
-      <div className="flex items-end gap-1 px-2 py-2">
+      <div className="flex items-center gap-1 px-2 py-2">
         <IconButton icon={Plus} label="Attach file" size="sm" variant="ghost" />
 
-        <div className="flex min-h-[36px] flex-1 items-end rounded-2xl bg-bg-input px-3 py-1.5">
+        <div className="flex min-h-[36px] flex-1 items-center rounded-2xl bg-bg-input px-3 py-1.5">
           <textarea
             ref={textareaRef}
             value={value}
@@ -118,6 +140,7 @@ export function MessageInput({
             label="Emoji picker"
             size="sm"
             variant="ghost"
+            onClick={() => setShowEmojiPicker((prev) => !prev)}
           />
         )}
       </div>

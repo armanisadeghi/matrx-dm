@@ -14,7 +14,7 @@ export function Badge({ count, className }: BadgeProps) {
   return (
     <span
       className={cn(
-        "inline-flex items-center justify-center rounded-full bg-destructive font-semibold text-white animate-spring-scale",
+        "inline-flex items-center justify-center rounded-full bg-accent font-semibold text-white animate-spring-scale",
         isDot
           ? "h-2.5 w-2.5"
           : count < 10

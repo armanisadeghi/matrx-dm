@@ -18,7 +18,13 @@ type MessageThreadProps = {
 
 type ThreadItem =
   | { type: "date-separator"; date: string; key: string }
-  | { type: "message"; message: MessageWithSender; showAvatar: boolean; showName: boolean; key: string };
+  | {
+      type: "message";
+      message: MessageWithSender;
+      isLastInGroup: boolean;
+      isLastFromMe: boolean;
+      key: string;
+    };
 
 function buildThreadItems(
   messages: MessageWithSender[],
@@ -26,9 +32,19 @@ function buildThreadItems(
 ): ThreadItem[] {
   const items: ThreadItem[] = [];
 
+  // Pre-compute the index of the last message from the current user
+  let lastMyMsgIdx = -1;
+  for (let i = messages.length - 1; i >= 0; i--) {
+    if (messages[i]!.sender_id === currentUserId) {
+      lastMyMsgIdx = i;
+      break;
+    }
+  }
+
   for (let i = 0; i < messages.length; i++) {
     const msg = messages[i]!;
     const prevMsg = i > 0 ? messages[i - 1]! : null;
+    const nextMsg = i < messages.length - 1 ? messages[i + 1]! : null;
 
     if (!prevMsg || !isSameDay(prevMsg.created_at, msg.created_at)) {
       items.push({
@@ -39,16 +55,18 @@ function buildThreadItems(
     }
 
     const isMine = msg.sender_id === currentUserId;
-    const isSameSenderAsPrev =
-      prevMsg &&
-      prevMsg.sender_id === msg.sender_id &&
-      isSameDay(prevMsg.created_at, msg.created_at);
+
+    // Last in group: next message is from a different sender, or is a different day, or doesn't exist
+    const isLastInGroup =
+      !nextMsg ||
+      nextMsg.sender_id !== msg.sender_id ||
+      !isSameDay(msg.created_at, nextMsg.created_at);
 
     items.push({
       type: "message",
       message: msg,
-      showAvatar: !isMine && !isSameSenderAsPrev,
-      showName: !isMine && !isSameSenderAsPrev,
+      isLastInGroup,
+      isLastFromMe: isMine && i === lastMyMsgIdx,
       key: msg.optimistic_id ?? msg.id,
     });
   }
@@ -74,7 +92,7 @@ export function MessageThread({
     estimateSize: (index) => {
       const item = items[index];
       if (!item) return 48;
-      return item.type === "date-separator" ? 40 : 64;
+      return item.type === "date-separator" ? 40 : 56;
     },
     overscan: 10,
   });
@@ -145,8 +163,8 @@ export function MessageThread({
                     <MessageBubble
                       message={item.message}
                       isMine={item.message.sender_id === currentUserId}
-                      showAvatar={item.showAvatar}
-                      showName={item.showName}
+                      isLastInGroup={item.isLastInGroup}
+                      isLastFromMe={item.isLastFromMe}
                       onContextMenu={
                         onContextMenu
                           ? (e) => onContextMenu(item.message, e)

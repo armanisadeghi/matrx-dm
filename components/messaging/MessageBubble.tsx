@@ -1,32 +1,37 @@
 "use client";
 
 import { cn } from "@/lib/cn";
-import { Avatar } from "@/components/ui";
 import { formatMessageTime } from "@/lib/utils/format";
-import { Check, CheckCheck, Clock, AlertCircle } from "lucide-react";
 import type { MessageWithSender } from "@/lib/types";
 
 type MessageBubbleProps = {
   message: MessageWithSender;
   isMine: boolean;
-  showAvatar: boolean;
-  showName: boolean;
+  isLastInGroup: boolean;
+  isLastFromMe: boolean;
   onContextMenu?: (e: React.MouseEvent) => void;
   onRetry?: () => void;
 };
 
-function StatusIcon({ status }: { status: MessageWithSender["status"] }) {
+function StatusText({ status }: { status: MessageWithSender["status"] }) {
   switch (status) {
     case "sending":
-      return <Clock size={12} className="text-text-tertiary" strokeWidth={1.5} />;
+      return (
+        <span className="text-[10px] text-text-tertiary">Sending...</span>
+      );
     case "sent":
-      return <Check size={12} className="text-text-tertiary" strokeWidth={1.5} />;
     case "delivered":
-      return <CheckCheck size={12} className="text-text-tertiary" strokeWidth={1.5} />;
+      return (
+        <span className="text-[10px] text-text-tertiary">Delivered</span>
+      );
     case "read":
-      return <CheckCheck size={12} className="text-accent" strokeWidth={1.5} />;
+      return <span className="text-[10px] text-accent">Read</span>;
     case "failed":
-      return <AlertCircle size={12} className="text-destructive" strokeWidth={1.5} />;
+      return (
+        <span className="text-[10px] font-medium text-destructive">
+          Not Delivered
+        </span>
+      );
     default:
       return null;
   }
@@ -35,8 +40,8 @@ function StatusIcon({ status }: { status: MessageWithSender["status"] }) {
 export function MessageBubble({
   message,
   isMine,
-  showAvatar,
-  showName,
+  isLastInGroup,
+  isLastFromMe,
   onContextMenu,
   onRetry,
 }: MessageBubbleProps) {
@@ -44,12 +49,11 @@ export function MessageBubble({
     return (
       <div
         className={cn(
-          "flex items-end gap-2 px-4",
-          isMine ? "flex-row-reverse" : "flex-row"
+          "flex px-2",
+          isMine ? "justify-end" : "justify-start"
         )}
       >
-        <div className="w-8 shrink-0" />
-        <div className="rounded-2xl bg-bg-secondary px-3 py-2">
+        <div className="rounded-2xl bg-bg-secondary px-3 py-1.5">
           <span className="text-sm italic text-text-tertiary">
             Message deleted
           </span>
@@ -61,36 +65,18 @@ export function MessageBubble({
   return (
     <div
       className={cn(
-        "group flex items-end gap-2 px-4 animate-message-in",
-        isMine ? "flex-row-reverse" : "flex-row"
+        "group flex animate-message-in px-2",
+        isMine ? "justify-end" : "justify-start"
       )}
       onContextMenu={onContextMenu}
     >
-      {/* Avatar space */}
-      <div className="w-8 shrink-0">
-        {showAvatar && !isMine && message.sender && (
-          <Avatar
-            src={message.sender.avatar_url}
-            displayName={message.sender.display_name}
-            userId={message.sender.id}
-            size="sm"
-          />
-        )}
-      </div>
-
-      {/* Bubble */}
+      {/* Bubble container */}
       <div
         className={cn(
-          "flex max-w-[75%] flex-col gap-0.5",
+          "flex max-w-[80%] flex-col gap-0.5",
           isMine ? "items-end" : "items-start"
         )}
       >
-        {showName && !isMine && message.sender && (
-          <span className="px-1 text-xs font-medium text-text-secondary">
-            {message.sender.display_name}
-          </span>
-        )}
-
         {/* Reply quote */}
         {message.reply_to && (
           <div
@@ -109,13 +95,19 @@ export function MessageBubble({
 
         <div
           className={cn(
-            "rounded-2xl px-3 py-2",
+            "rounded-2xl px-3 py-1.5",
             isMine
-              ? "rounded-br-md bg-bubble-sent text-bubble-sent-text"
-              : "rounded-bl-md bg-bubble-received text-bubble-received-text"
+              ? cn(
+                  "bg-bubble-sent text-bubble-sent-text",
+                  isLastInGroup ? "bubble-tail-right" : "rounded-br-md"
+                )
+              : cn(
+                  "bg-bubble-received text-bubble-received-text",
+                  isLastInGroup ? "bubble-tail-left" : "rounded-bl-md"
+                )
           )}
         >
-          <p className="whitespace-pre-wrap break-words text-base leading-relaxed">
+          <p className="whitespace-pre-wrap break-words text-base leading-snug">
             {message.content}
           </p>
         </div>
@@ -137,7 +129,7 @@ export function MessageBubble({
           </div>
         )}
 
-        {/* Timestamp + status */}
+        {/* Timestamp + iOS-style status (only on last message from me) */}
         <div className="flex items-center gap-1 px-1">
           <span className="text-[10px] text-text-tertiary">
             {formatMessageTime(message.created_at)}
@@ -145,7 +137,7 @@ export function MessageBubble({
           {message.is_edited && (
             <span className="text-[10px] text-text-tertiary">edited</span>
           )}
-          {isMine && <StatusIcon status={message.status} />}
+          {isMine && isLastFromMe && <StatusText status={message.status} />}
           {message.status === "failed" && onRetry && (
             <button
               type="button"

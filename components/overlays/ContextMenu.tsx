@@ -139,7 +139,7 @@ export function ContextMenu({ sections, position, onClose }: ContextMenuProps) {
       ref={menuRef}
       role="menu"
       className={cn(
-        "fixed z-50 min-w-[180px] rounded-xl py-1.5 shadow-xl",
+        "fixed z-50 min-w-[200px] rounded-2xl py-2 shadow-2xl",
         "glass animate-spring-scale",
         "origin-top-left"
       )}
@@ -163,7 +163,7 @@ export function ContextMenu({ sections, position, onClose }: ContextMenuProps) {
                   onClose();
                 }}
                 className={cn(
-                  "flex w-full items-center gap-2.5 px-3 py-2 text-sm",
+                  "flex w-full items-center gap-2.5 px-3.5 py-2.5 text-sm",
                   "cursor-pointer transition-colors duration-[var(--duration-fast)]",
                   item.destructive
                     ? "text-destructive hover:bg-destructive/10"

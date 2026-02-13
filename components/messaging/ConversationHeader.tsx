@@ -2,7 +2,7 @@
 
 import { cn } from "@/lib/cn";
 import { Avatar, IconButton } from "@/components/ui";
-import { ArrowLeft, Phone, Video, Info } from "lucide-react";
+import { ArrowLeft, Phone, Video } from "lucide-react";
 import { useRouter } from "next/navigation";
 
 type ConversationHeaderProps = {
@@ -44,13 +44,15 @@ export function ConversationHeader({
   return (
     <header
       className={cn(
-        "flex items-center gap-3 px-2 py-2 glass",
-        "border-b border-glass-border",
+        "pointer-events-auto absolute inset-x-0 top-0 z-20 flex items-center px-2 pb-3 pt-2",
         className
       )}
+      style={{
+        background: "linear-gradient(to bottom, var(--bg-primary) 0%, var(--bg-primary) 30%, transparent 100%)",
+      }}
     >
-      {/* Back button — visible on mobile only */}
-      <div className="lg:hidden">
+      {/* Left: Back button (mobile only) */}
+      <div className="flex min-w-[48px] items-center sm:hidden">
         <IconButton
           icon={ArrowLeft}
           label="Back to conversations"
@@ -60,34 +62,42 @@ export function ConversationHeader({
         />
       </div>
 
-      <Avatar
-        src={avatarUrl}
-        displayName={name}
-        userId={conversationId}
-        size="md"
-        isOnline={isOnline}
-      />
+      {/* Spacer for desktop (left side balance) */}
+      <div className="hidden min-w-[48px] sm:block" />
 
-      <div className="flex min-w-0 flex-1 flex-col">
-        <h1 className="truncate text-md font-semibold text-text-primary">
+      {/* Center: Avatar + Name (clickable for info) */}
+      <button
+        type="button"
+        className="flex flex-1 cursor-pointer flex-col items-center justify-center gap-0"
+        onClick={() => router.push(`/messages/${conversationId}/info`)}
+        aria-label="Conversation info"
+      >
+        <Avatar
+          src={avatarUrl}
+          displayName={name}
+          userId={conversationId}
+          size="sm"
+          isOnline={isOnline}
+        />
+        <span className="-mt-1 truncate text-xs font-semibold text-text-primary">
           {name}
-        </h1>
+        </span>
         {subtitle && (
-          <p
+          <span
             className={cn(
-              "truncate text-xs",
+              "truncate text-[10px] leading-tight",
               typingUsers.length > 0 ? "text-accent" : "text-text-secondary"
             )}
           >
             {subtitle}
-          </p>
+          </span>
         )}
-      </div>
+      </button>
 
-      <div className="flex items-center gap-0.5">
+      {/* Right: Call actions */}
+      <div className="flex min-w-[48px] items-center justify-end gap-0.5">
         <IconButton icon={Phone} label="Voice call" size="sm" variant="ghost" />
         <IconButton icon={Video} label="Video call" size="sm" variant="ghost" />
-        <IconButton icon={Info} label="Conversation info" size="sm" variant="ghost" />
       </div>
     </header>
   );

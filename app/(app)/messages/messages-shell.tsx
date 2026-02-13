@@ -36,8 +36,8 @@ export function MessagesShell({
         <div
           className={cn(
             "shrink-0",
-            hasActiveConversation ? "hidden lg:flex" : "flex",
-            "w-full lg:w-auto"
+            hasActiveConversation ? "hidden sm:flex" : "flex",
+            "w-full sm:w-auto"
           )}
         >
           <Sidebar conversations={conversations} />
@@ -47,7 +47,7 @@ export function MessagesShell({
         <main
           className={cn(
             "flex flex-1 flex-col",
-            hasActiveConversation ? "flex" : "hidden lg:flex"
+            hasActiveConversation ? "flex" : "hidden sm:flex"
           )}
         >
           {children}
