@@ -124,7 +124,9 @@ export function NewConversationSheet({ open, onClose }: NewConversationSheetProp
         return;
       }
       onClose();
+      // Navigate and refresh so the layout re-fetches conversations
       router.push(`/messages/${result.conversationId}`);
+      router.refresh();
     } catch {
       setError("Failed to create conversation");
     } finally {

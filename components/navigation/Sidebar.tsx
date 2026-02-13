@@ -25,6 +25,7 @@ import {
   toggleMute,
   deleteConversation,
 } from "@/lib/actions/conversations";
+import { useConversations } from "@/app/(app)/messages/conversations-context";
 
 type SidebarProps = {
   conversations: ConversationWithDetails[];
@@ -46,6 +47,7 @@ export function Sidebar({ conversations, className }: SidebarProps) {
   const activeId = params?.conversationId as string | undefined;
   const contextMenu = useContextMenu<ConversationWithDetails>();
   const searchBarRef = useRef<HTMLInputElement>(null);
+  const { removeConversation } = useConversations();
 
   // Keyboard shortcuts: Cmd+N for new conversation, Cmd+K for search
   useEffect(() => {
@@ -67,6 +69,26 @@ export function Sidebar({ conversations, className }: SidebarProps) {
     return () => document.removeEventListener("keydown", handleKeyDown);
   }, []);
 
+  // Listen for custom events from other pages (e.g. conversation-not-found)
+  useEffect(() => {
+    function handleOpenNewConversation() {
+      setNewConvOpen(true);
+    }
+    function handleFocusSearch() {
+      searchBarRef.current?.focus();
+    }
+
+    window.addEventListener("open-new-conversation", handleOpenNewConversation);
+    window.addEventListener("focus-search", handleFocusSearch);
+    return () => {
+      window.removeEventListener(
+        "open-new-conversation",
+        handleOpenNewConversation
+      );
+      window.removeEventListener("focus-search", handleFocusSearch);
+    };
+  }, []);
+
   const filtered = conversations.filter((c) => {
     if (search) {
       const q = search.toLowerCase();
@@ -83,6 +105,19 @@ export function Sidebar({ conversations, className }: SidebarProps) {
 
   const pinned = filtered.filter((c) => c.is_pinned);
   const unpinned = filtered.filter((c) => !c.is_pinned);
+
+  async function handleDelete(conversationId: string) {
+    // Optimistic: remove from sidebar immediately
+    removeConversation(conversationId);
+
+    // If we're viewing the deleted conversation, navigate away
+    if (activeId === conversationId) {
+      router.replace("/messages");
+    }
+
+    // Fire-and-forget server cleanup
+    deleteConversation(conversationId);
+  }
 
   function getContextMenuSections(
     conv: ConversationWithDetails
@@ -115,7 +150,7 @@ export function Sidebar({ conversations, className }: SidebarProps) {
             label: "Delete",
             icon: Trash2,
             destructive: true,
-            onClick: () => deleteConversation(conv.conversation_id),
+            onClick: () => handleDelete(conv.conversation_id),
           },
         ],
       },

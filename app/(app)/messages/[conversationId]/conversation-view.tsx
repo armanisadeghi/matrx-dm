@@ -32,6 +32,7 @@ export function ConversationView({
   const {
     messages,
     isConnected,
+    isFetched,
     addOptimistic,
     reconcile,
     failOptimistic,
@@ -102,10 +103,33 @@ export function ConversationView({
         typingUsers={typingUsers}
       />
 
-      {messages.length === 0 && !isConnected ? (
-        <div className="flex flex-1 items-center justify-center">
-          <Spinner size="lg" />
-        </div>
+      {messages.length === 0 ? (
+        isFetched ? (
+          /* Empty conversation — ready for the first message */
+          <div className="flex flex-1 flex-col items-center justify-center gap-3 px-6">
+            <div className="flex h-16 w-16 items-center justify-center rounded-full bg-bg-tertiary/60">
+              <svg
+                viewBox="0 0 24 24"
+                className="h-7 w-7 text-text-tertiary"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.5"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+              </svg>
+            </div>
+            <p className="text-sm text-text-tertiary">
+              No messages yet. Say hello!
+            </p>
+          </div>
+        ) : (
+          /* Still loading initial messages */
+          <div className="flex flex-1 items-center justify-center">
+            <Spinner size="lg" />
+          </div>
+        )
       ) : (
         <MessageThread
           messages={messages}

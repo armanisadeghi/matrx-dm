@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { createClient } from "@/lib/supabase/client";
 import type { ConversationWithDetails } from "@/lib/types";
 import type { Tables } from "@/lib/types/database";
@@ -69,13 +69,29 @@ export function useConversationList(
     };
   }, [currentUserId]);
 
-  function markRead(conversationId: string) {
+  const markRead = useCallback((conversationId: string) => {
     setConversations((prev) =>
       prev.map((c) =>
         c.conversation_id === conversationId ? { ...c, unread_count: 0 } : c
       )
     );
-  }
+  }, []);
 
-  return { conversations, markRead };
+  const removeConversation = useCallback((conversationId: string) => {
+    setConversations((prev) =>
+      prev.filter((c) => c.conversation_id !== conversationId)
+    );
+  }, []);
+
+  const addConversation = useCallback((conversation: ConversationWithDetails) => {
+    setConversations((prev) => {
+      // Don't add duplicates
+      if (prev.some((c) => c.conversation_id === conversation.conversation_id)) {
+        return prev;
+      }
+      return [conversation, ...prev];
+    });
+  }, []);
+
+  return { conversations, markRead, removeConversation, addConversation };
 }

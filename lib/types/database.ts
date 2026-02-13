@@ -292,6 +292,10 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      delete_conversation_for_user: {
+        Args: { p_conversation_id: string }
+        Returns: boolean
+      }
       get_conversations_for_user: {
         Args: { p_user_id: string }
         Returns: {

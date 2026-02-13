@@ -10,6 +10,7 @@ type MessageRow = Tables<"messages">;
 type State = {
   messages: MessageWithSender[];
   isConnected: boolean;
+  isFetched: boolean;
 };
 
 type Action =
@@ -25,22 +26,49 @@ type Action =
 function reducer(state: State, action: Action): State {
   switch (action.type) {
     case "SET_INITIAL":
-      return { ...state, messages: action.messages };
+      return { ...state, messages: action.messages, isFetched: true };
 
     case "ADD_MESSAGE": {
-      const exists = state.messages.some(
-        (m) => m.id === action.message.id || m.optimistic_id === action.message.id
+      // Check if this message already exists by server ID
+      const existsById = state.messages.some(
+        (m) => m.id === action.message.id
       );
-      if (exists) {
+      if (existsById) {
+        // Already reconciled — just update in place
         return {
           ...state,
           messages: state.messages.map((m) =>
-            m.optimistic_id === action.message.id
-              ? { ...m, ...action.message, optimistic_id: undefined, status: "sent" as MessageStatus }
+            m.id === action.message.id
+              ? { ...m, ...action.message, status: "sent" as MessageStatus }
               : m
           ),
         };
       }
+
+      // Check for a pending optimistic message from the same sender with matching content
+      // This handles the race where realtime arrives before reconcile
+      const optimisticIdx = state.messages.findIndex(
+        (m) =>
+          m.optimistic_id &&
+          m.sender_id === action.message.sender_id &&
+          m.content === action.message.content &&
+          (m.status === "sending" || m.status === "sent")
+      );
+      if (optimisticIdx !== -1) {
+        const updated = [...state.messages];
+        updated[optimisticIdx] = {
+          ...updated[optimisticIdx]!,
+          ...action.message,
+          sender: updated[optimisticIdx]!.sender,
+          reactions: updated[optimisticIdx]!.reactions,
+          attachments: updated[optimisticIdx]!.attachments,
+          reply_to: updated[optimisticIdx]!.reply_to,
+          optimistic_id: undefined,
+          status: "sent" as MessageStatus,
+        };
+        return { ...state, messages: updated };
+      }
+
       const newMsg: MessageWithSender = {
         ...action.message,
         sender: { id: action.message.sender_id } as MessageWithSender["sender"],
@@ -105,6 +133,7 @@ export function useRealtimeMessages(conversationId: string | null) {
   const [state, dispatch] = useReducer(reducer, {
     messages: [],
     isConnected: false,
+    isFetched: false,
   });
 
   useEffect(() => {
@@ -114,35 +143,54 @@ export function useRealtimeMessages(conversationId: string | null) {
     const supabase = createClient();
 
     async function fetchMessages() {
-      const { data } = await supabase
+      const { data, error } = await supabase
         .from("messages")
         .select(
           `
           *,
           sender:profiles!messages_sender_id_fkey(*),
           reactions:message_reactions(*),
-          attachments(*),
-          reply_to:messages!messages_reply_to_id_fkey(
-            id, content, type, sender_id,
-            sender:profiles!messages_sender_id_fkey(id, display_name)
-          )
+          attachments(*)
         `
         )
         .eq("conversation_id", convId)
         .order("created_at", { ascending: true })
         .limit(100);
 
-      if (data) {
-        const formatted = data.map((m) => ({
+      if (error) {
+        console.error("[useRealtimeMessages] fetch error:", error);
+      }
+
+      const messages = data ?? [];
+
+      // Build a lookup map for reply_to references
+      const messageMap = new Map(messages.map((m) => [m.id, m]));
+
+      const formatted = messages.map((m) => {
+        let replyTo: MessageWithSender["reply_to"] = null;
+        if (m.reply_to_id) {
+          const parent = messageMap.get(m.reply_to_id);
+          if (parent) {
+            replyTo = {
+              id: parent.id,
+              content: parent.content,
+              type: parent.type,
+              sender_id: parent.sender_id,
+              sender: parent.sender as unknown as { id: string; display_name: string },
+            };
+          }
+        }
+
+        return {
           ...m,
           sender: m.sender as unknown as MessageWithSender["sender"],
           reactions: (m.reactions ?? []) as MessageWithSender["reactions"],
           attachments: (m.attachments ?? []) as MessageWithSender["attachments"],
-          reply_to: (m.reply_to as unknown as MessageWithSender["reply_to"]) ?? null,
+          reply_to: replyTo,
           status: "sent" as MessageStatus,
-        }));
-        dispatch({ type: "SET_INITIAL", messages: formatted });
-      }
+        };
+      });
+      dispatch({ type: "SET_INITIAL", messages: formatted });
     }
 
     fetchMessages();
@@ -185,6 +233,7 @@ export function useRealtimeMessages(conversationId: string | null) {
   return {
     messages: state.messages,
     isConnected: state.isConnected,
+    isFetched: state.isFetched,
     addOptimistic: (msg: MessageWithSender) =>
       dispatch({ type: "ADD_OPTIMISTIC", message: msg }),
     reconcile: (optimisticId: string, confirmedId: string) =>

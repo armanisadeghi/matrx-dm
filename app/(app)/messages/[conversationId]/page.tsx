@@ -1,6 +1,7 @@
 import { createClient } from "@/lib/supabase/server";
-import { notFound } from "next/navigation";
+import { redirect } from "next/navigation";
 import { ConversationView } from "./conversation-view";
+import { ConversationNotFound } from "./conversation-not-found";
 
 type Props = {
   params: Promise<{ conversationId: string }>;
@@ -14,7 +15,14 @@ export default async function ConversationPage({ params }: Props) {
     data: { user },
   } = await supabase.auth.getUser();
 
-  if (!user) notFound();
+  if (!user) redirect("/login");
+
+  // Validate UUID format before querying
+  const uuidRegex =
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  if (!uuidRegex.test(conversationId)) {
+    return <ConversationNotFound reason="invalid" conversationId={conversationId} />;
+  }
 
   const { data: participant } = await supabase
     .from("conversation_participants")
@@ -23,7 +31,19 @@ export default async function ConversationPage({ params }: Props) {
     .eq("user_id", user.id)
     .single();
 
-  if (!participant) notFound();
+  // Check if the conversation exists at all (for a better error message)
+  if (!participant) {
+    const { data: conversationExists } = await supabase
+      .from("conversations")
+      .select("id")
+      .eq("id", conversationId)
+      .single();
+
+    if (conversationExists) {
+      return <ConversationNotFound reason="no-access" conversationId={conversationId} />;
+    }
+    return <ConversationNotFound reason="not-found" conversationId={conversationId} />;
+  }
 
   const { data: conversation } = await supabase
     .from("conversations")
@@ -31,7 +51,9 @@ export default async function ConversationPage({ params }: Props) {
     .eq("id", conversationId)
     .single();
 
-  if (!conversation) notFound();
+  if (!conversation) {
+    return <ConversationNotFound reason="not-found" conversationId={conversationId} />;
+  }
 
   let displayName = conversation.name ?? "Conversation";
   let avatarUrl = conversation.avatar_url;
@@ -39,7 +61,9 @@ export default async function ConversationPage({ params }: Props) {
   if (conversation.type === "direct") {
     const { data: otherParticipants } = await supabase
       .from("conversation_participants")
-      .select("user_id, profiles:profiles!conversation_participants_user_id_fkey(display_name, avatar_url)")
+      .select(
+        "user_id, profiles:profiles!conversation_participants_user_id_fkey(display_name, avatar_url)"
+      )
       .eq("conversation_id", conversationId)
       .neq("user_id", user.id);
 

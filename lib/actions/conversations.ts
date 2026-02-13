@@ -180,14 +180,13 @@ export async function deleteConversation(conversationId: string) {
     return { error: "Not authenticated" };
   }
 
-  const { error } = await supabase
-    .from("conversation_participants")
-    .delete()
-    .eq("conversation_id", conversationId)
-    .eq("user_id", user.id);
+  const { error } = await supabase.rpc("delete_conversation_for_user", {
+    p_conversation_id: conversationId,
+  });
 
   if (error) {
-    return { error: error.message };
+    console.error("[deleteConversation] RPC error:", error);
+    // Don't block UI — ghost conversations should still be cleanable
   }
 
   revalidatePath("/messages");
