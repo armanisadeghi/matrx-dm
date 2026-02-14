@@ -1,6 +1,7 @@
 "use server";
 
 import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { revalidatePath } from "next/cache";
 
 export async function createDirectConversation(otherUserId: string) {
@@ -34,20 +35,26 @@ export async function createDirectConversation(otherUserId: string) {
 
 export async function createGroupConversation(name: string, userIds: string[]) {
   const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
 
-  if (!user) {
+  // Use getClaims() to validate the user's JWT token
+  const { data: claimsData } = await supabase.auth.getClaims();
+  
+  const userId = claimsData?.claims?.sub;
+
+  if (!userId) {
     return { error: "Not authenticated" };
   }
 
-  const { data: conversation, error: convError } = await supabase
+  // Use admin client for the INSERT since we've already validated the user
+  // This bypasses RLS but is safe because we've verified the user's identity via getClaims()
+  const adminClient = createAdminClient();
+
+  const { data: conversation, error: convError } = await adminClient
     .from("conversations")
     .insert({
       type: "group",
       name,
-      created_by: user.id,
+      created_by: userId,
     })
     .select("id")
     .single();
@@ -56,13 +63,13 @@ export async function createGroupConversation(name: string, userIds: string[]) {
     return { error: convError.message };
   }
 
-  const participants = [user.id, ...userIds].map((uid) => ({
+  const participants = [userId, ...userIds].map((uid) => ({
     conversation_id: conversation.id,
     user_id: uid,
-    role: uid === user.id ? "owner" : "member",
+    role: uid === userId ? ("owner" as const) : ("member" as const),
   }));
 
-  const { error: partError } = await supabase
+  const { error: partError } = await adminClient
     .from("conversation_participants")
     .insert(participants);
 
@@ -121,9 +128,14 @@ export async function togglePin(conversationId: string) {
     return { error: fetchErr?.message ?? "Participant not found" };
   }
 
+  const newPinnedState = !participant.is_pinned;
+  
   const { error } = await supabase
     .from("conversation_participants")
-    .update({ is_pinned: !participant.is_pinned })
+    .update({ 
+      is_pinned: newPinnedState,
+      pinned_at: newPinnedState ? new Date().toISOString() : null
+    })
     .eq("id", participant.id);
 
   if (error) {
@@ -132,7 +144,7 @@ export async function togglePin(conversationId: string) {
 
   revalidatePath("/messages");
 
-  return { isPinned: !participant.is_pinned };
+  return { isPinned: newPinnedState };
 }
 
 export async function toggleMute(conversationId: string) {

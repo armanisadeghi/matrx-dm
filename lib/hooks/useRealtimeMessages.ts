@@ -1,16 +1,19 @@
 "use client";
 
-import { useEffect, useReducer } from "react";
+import { useEffect, useReducer, useRef } from "react";
 import { createClient } from "@/lib/supabase/client";
 import type { MessageWithSender, MessageStatus } from "@/lib/types";
 import type { Tables } from "@/lib/types/database";
 
 type MessageRow = Tables<"messages">;
 
+type ConnectionState = "connected" | "disconnected" | "reconnecting" | "failed";
+
 type State = {
   messages: MessageWithSender[];
-  isConnected: boolean;
+  connectionState: ConnectionState;
   isFetched: boolean;
+  lastMessageTimestamp: string | null;
 };
 
 type Action =
@@ -21,12 +24,20 @@ type Action =
   | { type: "ADD_OPTIMISTIC"; message: MessageWithSender }
   | { type: "RECONCILE"; optimisticId: string; confirmedId: string }
   | { type: "FAIL_OPTIMISTIC"; optimisticId: string }
-  | { type: "SET_CONNECTED"; connected: boolean };
+  | { type: "SET_CONNECTION_STATE"; state: ConnectionState }
+  | { type: "UPDATE_LAST_TIMESTAMP"; timestamp: string };
 
 function reducer(state: State, action: Action): State {
   switch (action.type) {
     case "SET_INITIAL":
-      return { ...state, messages: action.messages, isFetched: true };
+      return { 
+        ...state, 
+        messages: action.messages, 
+        isFetched: true,
+        lastMessageTimestamp: action.messages.length > 0 
+          ? action.messages[action.messages.length - 1]!.created_at 
+          : null
+      };
 
     case "ADD_MESSAGE": {
       // Check if this message already exists by server ID
@@ -66,7 +77,11 @@ function reducer(state: State, action: Action): State {
           optimistic_id: undefined,
           status: "sent" as MessageStatus,
         };
-        return { ...state, messages: updated };
+        return { 
+          ...state, 
+          messages: updated,
+          lastMessageTimestamp: action.message.created_at
+        };
       }
 
       const newMsg: MessageWithSender = {
@@ -77,7 +92,11 @@ function reducer(state: State, action: Action): State {
         reply_to: null,
         status: "sent",
       };
-      return { ...state, messages: [...state.messages, newMsg] };
+      return { 
+        ...state, 
+        messages: [...state.messages, newMsg],
+        lastMessageTimestamp: action.message.created_at
+      };
     }
 
     case "UPDATE_MESSAGE":
@@ -121,29 +140,49 @@ function reducer(state: State, action: Action): State {
         ),
       };
 
-    case "SET_CONNECTED":
-      return { ...state, isConnected: action.connected };
+    case "SET_CONNECTION_STATE":
+      return { ...state, connectionState: action.state };
+
+    case "UPDATE_LAST_TIMESTAMP":
+      return { ...state, lastMessageTimestamp: action.timestamp };
 
     default:
       return state;
   }
 }
 
+const RECONNECT_DELAY_MS = 3000; // Show banner after 3 seconds
+const MAX_RETRY_ATTEMPTS = 5;
+const RETRY_DELAYS = [1000, 2000, 4000, 8000, 16000]; // Exponential backoff
+
 export function useRealtimeMessages(conversationId: string | null) {
   const [state, dispatch] = useReducer(reducer, {
     messages: [],
-    isConnected: false,
+    connectionState: "disconnected",
     isFetched: false,
+    lastMessageTimestamp: null,
   });
+
+  const reconnectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const retryAttemptRef = useRef(0);
+  const channelRef = useRef<ReturnType<ReturnType<typeof createClient>["channel"]> | null>(null);
+  const lastMessageTimestampRef = useRef<string | null>(null);
+  const isReconnectingRef = useRef(false);
+
+  // Keep ref in sync with state
+  useEffect(() => {
+    lastMessageTimestampRef.current = state.lastMessageTimestamp;
+  }, [state.lastMessageTimestamp]);
 
   useEffect(() => {
     if (!conversationId) return;
 
     const convId = conversationId;
     const supabase = createClient();
+    let isCleanedUp = false;
 
-    async function fetchMessages() {
-      const { data, error } = await supabase
+    async function fetchMessages(sinceTimestamp?: string | null) {
+      const query = supabase
         .from("messages")
         .select(
           `
@@ -157,8 +196,16 @@ export function useRealtimeMessages(conversationId: string | null) {
         .order("created_at", { ascending: true })
         .limit(100);
 
+      // If we have a timestamp, fetch only messages after it (for reconnection)
+      if (sinceTimestamp) {
+        query.gt("created_at", sinceTimestamp);
+      }
+
+      const { data, error } = await query;
+
       if (error) {
         console.error("[useRealtimeMessages] fetch error:", error);
+        return [];
       }
 
       const messages = data ?? [];
@@ -187,49 +234,159 @@ export function useRealtimeMessages(conversationId: string | null) {
           status: "sent" as MessageStatus,
         };
       });
-      dispatch({ type: "SET_INITIAL", messages: formatted });
+
+      return formatted;
     }
 
-    fetchMessages();
+    async function setupChannel() {
+      // Prevent concurrent reconnection attempts
+      if (isReconnectingRef.current || isCleanedUp) {
+        return;
+      }
+      
+      isReconnectingRef.current = true;
 
-    const channel = supabase
-      .channel(`messages:${convId}`)
-      .on(
-        "postgres_changes",
-        {
-          event: "INSERT",
-          schema: "public",
-          table: "messages",
-          filter: `conversation_id=eq.${convId}`,
-        },
-        (payload) => {
-          dispatch({ type: "ADD_MESSAGE", message: payload.new as MessageRow });
+      // Clear any existing reconnect timeout
+      if (reconnectTimeoutRef.current) {
+        clearTimeout(reconnectTimeoutRef.current);
+        reconnectTimeoutRef.current = null;
+      }
+
+      // Remove existing channel if any
+      if (channelRef.current) {
+        try {
+          await supabase.removeChannel(channelRef.current);
+        } catch (err) {
+          console.error("[useRealtimeMessages] Error removing channel:", err);
         }
-      )
-      .on(
-        "postgres_changes",
-        {
-          event: "UPDATE",
-          schema: "public",
-          table: "messages",
-          filter: `conversation_id=eq.${convId}`,
-        },
-        (payload) => {
-          dispatch({ type: "UPDATE_MESSAGE", message: payload.new as MessageRow });
-        }
-      )
-      .subscribe((status) => {
-        dispatch({ type: "SET_CONNECTED", connected: status === "SUBSCRIBED" });
-      });
+        channelRef.current = null;
+      }
+
+      if (isCleanedUp) {
+        isReconnectingRef.current = false;
+        return;
+      }
+
+      const channel = supabase
+        .channel(`messages:${convId}`)
+        .on(
+          "postgres_changes",
+          {
+            event: "INSERT",
+            schema: "public",
+            table: "messages",
+            filter: `conversation_id=eq.${convId}`,
+          },
+          (payload) => {
+            dispatch({ type: "ADD_MESSAGE", message: payload.new as MessageRow });
+          }
+        )
+        .on(
+          "postgres_changes",
+          {
+            event: "UPDATE",
+            schema: "public",
+            table: "messages",
+            filter: `conversation_id=eq.${convId}`,
+          },
+          (payload) => {
+            dispatch({ type: "UPDATE_MESSAGE", message: payload.new as MessageRow });
+          }
+        )
+        .subscribe(async (status) => {
+          if (isCleanedUp) return;
+
+          if (status === "SUBSCRIBED") {
+            // Successfully connected/reconnected
+            dispatch({ type: "SET_CONNECTION_STATE", state: "connected" });
+            retryAttemptRef.current = 0;
+            isReconnectingRef.current = false;
+
+            // If we were reconnecting, fetch any missed messages
+            if (lastMessageTimestampRef.current) {
+              const missedMessages = await fetchMessages(lastMessageTimestampRef.current);
+              if (!isCleanedUp) {
+                missedMessages.forEach((msg) => {
+                  dispatch({ type: "ADD_MESSAGE", message: msg as unknown as MessageRow });
+                });
+              }
+            }
+          } else if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") {
+            isReconnectingRef.current = false;
+            
+            // Connection failed - schedule retry with exponential backoff
+            if (retryAttemptRef.current < MAX_RETRY_ATTEMPTS && !isCleanedUp) {
+              const delay = RETRY_DELAYS[retryAttemptRef.current] ?? RETRY_DELAYS[RETRY_DELAYS.length - 1]!;
+              retryAttemptRef.current++;
+
+              console.log(`[useRealtimeMessages] Retry attempt ${retryAttemptRef.current}/${MAX_RETRY_ATTEMPTS} in ${delay}ms`);
+
+              // Schedule reconnection outside the current call stack
+              setTimeout(() => {
+                if (!isCleanedUp) {
+                  setupChannel();
+                }
+              }, delay);
+            } else if (!isCleanedUp) {
+              // Max retries exceeded
+              dispatch({ type: "SET_CONNECTION_STATE", state: "failed" });
+              console.error("[useRealtimeMessages] Max retry attempts exceeded");
+            }
+          } else if (status === "CLOSED") {
+            isReconnectingRef.current = false;
+            
+            if (isCleanedUp) return;
+
+            // Connection closed - schedule reconnect timer
+            // Only show "reconnecting" UI after RECONNECT_DELAY_MS
+            if (!reconnectTimeoutRef.current) {
+              reconnectTimeoutRef.current = setTimeout(() => {
+                if (!isCleanedUp) {
+                  dispatch({ type: "SET_CONNECTION_STATE", state: "reconnecting" });
+                }
+              }, RECONNECT_DELAY_MS);
+            }
+
+            // Set to disconnected state
+            dispatch({ type: "SET_CONNECTION_STATE", state: "disconnected" });
+            
+            // Schedule reconnection attempt outside the current call stack
+            setTimeout(() => {
+              if (!isCleanedUp) {
+                setupChannel();
+              }
+            }, 1000);
+          }
+        });
+
+      channelRef.current = channel;
+    }
+
+    // Initial fetch and setup
+    (async () => {
+      const initialMessages = await fetchMessages();
+      dispatch({ type: "SET_INITIAL", messages: initialMessages });
+      await setupChannel();
+    })();
 
     return () => {
-      supabase.removeChannel(channel);
+      isCleanedUp = true;
+      isReconnectingRef.current = false;
+      
+      if (reconnectTimeoutRef.current) {
+        clearTimeout(reconnectTimeoutRef.current);
+        reconnectTimeoutRef.current = null;
+      }
+      if (channelRef.current) {
+        supabase.removeChannel(channelRef.current);
+        channelRef.current = null;
+      }
     };
   }, [conversationId]);
 
   return {
     messages: state.messages,
-    isConnected: state.isConnected,
+    connectionState: state.connectionState,
     isFetched: state.isFetched,
     addOptimistic: (msg: MessageWithSender) =>
       dispatch({ type: "ADD_OPTIMISTIC", message: msg }),

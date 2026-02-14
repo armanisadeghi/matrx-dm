@@ -26,7 +26,9 @@ export function NewConversationSheet({ open, onClose }: NewConversationSheetProp
   const [selectedUsers, setSelectedUsers] = useState<SearchResult[]>([]);
   const [groupName, setGroupName] = useState("");
   const [creating, setCreating] = useState(false);
+  const [currentUserName, setCurrentUserName] = useState<string>("");
   const inputRef = useRef<HTMLInputElement>(null);
+  const groupNameInputRef = useRef<HTMLInputElement>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Fetch all contacts from the API
@@ -48,6 +50,23 @@ export function NewConversationSheet({ open, onClose }: NewConversationSheetProp
       setLoading(false);
     }
   }
+
+  // Fetch current user's name
+  useEffect(() => {
+    async function fetchCurrentUser() {
+      try {
+        const res = await fetch("/api/users/me");
+        if (res.ok) {
+          const data = await res.json();
+          const firstName = data.display_name?.split(" ")[0] || "You";
+          setCurrentUserName(firstName);
+        }
+      } catch {
+        setCurrentUserName("You");
+      }
+    }
+    fetchCurrentUser();
+  }, []);
 
   // Load contacts when the sheet opens, focus input
   useEffect(() => {
@@ -134,13 +153,30 @@ export function NewConversationSheet({ open, onClose }: NewConversationSheetProp
     }
   }
 
-  async function handleCreateGroup() {
-    if (!groupName.trim() || selectedUsers.length === 0) return;
+  // Generate default group name from participants
+  function generateDefaultGroupName(): string {
+    const firstNames = selectedUsers.map((u) => u.display_name.split(" ")[0]);
+    
+    if (firstNames.length === 0) {
+      return currentUserName;
+    }
+    
+    if (firstNames.length <= 2) {
+      // 2 or fewer: "Joe, Jane, Arman"
+      return [...firstNames, currentUserName].join(", ");
+    }
+    
+    // More than 2: "Joe, Jane, Others"
+    return `${firstNames[0]}, ${firstNames[1]}, Others`;
+  }
 
+  async function handleCreateGroup() {
     setCreating(true);
     try {
+      const finalGroupName = groupName.trim() || generateDefaultGroupName();
+      
       const result = await createGroupConversation(
-        groupName.trim(),
+        finalGroupName,
         selectedUsers.map((u) => u.id)
       );
       if (result.error) {
@@ -179,14 +215,13 @@ export function NewConversationSheet({ open, onClose }: NewConversationSheetProp
             role="dialog"
             aria-modal="true"
             aria-label="New conversation"
-            initial={{ y: "100%" }}
-            animate={{ y: 0 }}
-            exit={{ y: "100%" }}
+            initial={{ x: "100%" }}
+            animate={{ x: 0 }}
+            exit={{ x: "100%" }}
             transition={{ type: "spring", damping: 30, stiffness: 300 }}
             className={cn(
-              "fixed inset-x-0 bottom-0 z-50",
-              "h-[85dvh] lg:left-auto lg:right-0 lg:top-0 lg:bottom-0 lg:h-full lg:w-[400px]",
-              "rounded-t-2xl lg:rounded-none",
+              "fixed right-0 top-0 bottom-0 z-50",
+              "w-full sm:w-[400px]",
               "bg-bg-secondary",
               "flex flex-col",
               "safe-bottom"
@@ -225,15 +260,27 @@ export function NewConversationSheet({ open, onClose }: NewConversationSheetProp
             {/* Group name input (only in group mode) */}
             {mode === "group" && (
               <div className="border-b border-border-subtle px-4 py-3">
+                <label htmlFor="group-name" className="block text-xs font-medium text-text-secondary mb-2">
+                  Group Name (optional)
+                </label>
                 <input
+                  ref={groupNameInputRef}
+                  id="group-name"
                   type="text"
                   value={groupName}
                   onChange={(e) => setGroupName(e.target.value)}
-                  placeholder="Group name"
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && !creating) {
+                      e.preventDefault();
+                      handleCreateGroup();
+                    }
+                  }}
+                  placeholder={selectedUsers.length > 0 ? generateDefaultGroupName() : "Enter a name for your group"}
                   className={cn(
                     "w-full rounded-lg bg-bg-input px-3 py-2.5",
                     "text-base text-text-primary placeholder:text-text-tertiary",
-                    "outline-none focus:ring-1 focus:ring-accent/50"
+                    "outline-none focus:ring-2 focus:ring-accent/50",
+                    "transition-shadow"
                   )}
                 />
 
@@ -433,24 +480,28 @@ export function NewConversationSheet({ open, onClose }: NewConversationSheetProp
             </div>
 
             {/* Group create button */}
-            {mode === "group" && selectedUsers.length > 0 && (
+            {mode === "group" && (
               <div className="border-t border-border-subtle px-4 py-3 safe-bottom">
                 <button
                   type="button"
                   onClick={handleCreateGroup}
-                  disabled={!groupName.trim() || creating}
+                  disabled={creating}
                   className={cn(
                     "flex w-full items-center justify-center rounded-xl",
-                    "bg-accent px-4 py-3",
-                    "text-base font-medium text-white",
-                    "transition-colors hover:bg-accent-hover",
-                    "disabled:opacity-50"
+                    "px-4 py-3",
+                    "text-base font-medium",
+                    "transition-all duration-200",
+                    creating
+                      ? "bg-bg-tertiary text-text-tertiary cursor-not-allowed"
+                      : "bg-accent text-white hover:bg-accent-hover active:scale-[0.98]"
                   )}
                 >
                   {creating ? (
                     <Spinner size="sm" />
+                  ) : selectedUsers.length === 0 ? (
+                    "Create Group (just you)"
                   ) : (
-                    `Create Group (${selectedUsers.length} ${selectedUsers.length === 1 ? "person" : "people"})`
+                    `Create Group (${selectedUsers.length + 1} ${selectedUsers.length === 0 ? "person" : "people"})`
                   )}
                 </button>
               </div>

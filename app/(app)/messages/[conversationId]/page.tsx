@@ -24,32 +24,31 @@ export default async function ConversationPage({ params }: Props) {
     return <ConversationNotFound reason="invalid" conversationId={conversationId} />;
   }
 
-  const { data: participant } = await supabase
-    .from("conversation_participants")
-    .select("id")
-    .eq("conversation_id", conversationId)
-    .eq("user_id", user.id)
-    .single();
-
-  // Check if the conversation exists at all (for a better error message)
-  if (!participant) {
-    const { data: conversationExists } = await supabase
-      .from("conversations")
+  // Fetch participant and conversation data in parallel
+  const [participantResult, conversationResult] = await Promise.all([
+    supabase
+      .from("conversation_participants")
       .select("id")
+      .eq("conversation_id", conversationId)
+      .eq("user_id", user.id)
+      .single(),
+    supabase
+      .from("conversations")
+      .select("*")
       .eq("id", conversationId)
-      .single();
+      .single(),
+  ]);
 
-    if (conversationExists) {
+  const { data: participant } = participantResult;
+  const { data: conversation } = conversationResult;
+
+  // Check access and existence
+  if (!participant) {
+    if (conversation) {
       return <ConversationNotFound reason="no-access" conversationId={conversationId} />;
     }
     return <ConversationNotFound reason="not-found" conversationId={conversationId} />;
   }
-
-  const { data: conversation } = await supabase
-    .from("conversations")
-    .select("*")
-    .eq("id", conversationId)
-    .single();
 
   if (!conversation) {
     return <ConversationNotFound reason="not-found" conversationId={conversationId} />;
@@ -58,18 +57,24 @@ export default async function ConversationPage({ params }: Props) {
   let displayName = conversation.name ?? "Conversation";
   let avatarUrl = conversation.avatar_url;
 
+  // Fetch member count and other participant data in parallel
   if (conversation.type === "direct") {
-    // Get the other participant's user_id
-    const { data: otherParticipantRows } = await supabase
-      .from("conversation_participants")
-      .select("user_id")
-      .eq("conversation_id", conversationId)
-      .neq("user_id", user.id);
+    const [memberCountResult, otherParticipantResult] = await Promise.all([
+      supabase
+        .from("conversation_participants")
+        .select("id", { count: "exact", head: true })
+        .eq("conversation_id", conversationId),
+      supabase
+        .from("conversation_participants")
+        .select("user_id")
+        .eq("conversation_id", conversationId)
+        .neq("user_id", user.id),
+    ]);
 
-    const otherUserId = otherParticipantRows?.[0]?.user_id;
+    const { count: memberCount } = memberCountResult;
+    const otherUserId = otherParticipantResult.data?.[0]?.user_id;
 
     if (otherUserId) {
-      // Fetch their profile directly
       const { data: profile } = await supabase
         .from("profiles")
         .select("display_name, avatar_url")
@@ -81,8 +86,19 @@ export default async function ConversationPage({ params }: Props) {
         avatarUrl = profile.avatar_url;
       }
     }
+
+    return (
+      <ConversationView
+        conversationId={conversationId}
+        conversationName={displayName}
+        conversationType={conversation.type}
+        avatarUrl={avatarUrl}
+        memberCount={memberCount ?? 0}
+      />
+    );
   }
 
+  // For group conversations, just fetch member count
   const { count: memberCount } = await supabase
     .from("conversation_participants")
     .select("id", { count: "exact", head: true })

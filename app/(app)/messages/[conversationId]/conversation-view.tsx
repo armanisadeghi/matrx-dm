@@ -31,7 +31,7 @@ export function ConversationView({
   const user = useUser();
   const {
     messages,
-    isConnected,
+    connectionState,
     isFetched,
     addOptimistic,
     reconcile,
@@ -94,35 +94,37 @@ export function ConversationView({
 
   return (
     <div className="relative flex h-full flex-col overflow-hidden">
-      {/* Messages fill the entire space — header & footer float on top */}
-      {messages.length === 0 ? (
-        isFetched ? (
-          /* Empty conversation — ready for the first message */
-          <div className="flex flex-1 flex-col items-center justify-center gap-3 px-6">
-            <div className="flex h-16 w-16 items-center justify-center rounded-full bg-bg-tertiary/60">
-              <svg
-                viewBox="0 0 24 24"
-                className="h-7 w-7 text-text-tertiary"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="1.5"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              >
-                <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
-              </svg>
-            </div>
-            <p className="text-sm text-text-tertiary">
-              No messages yet. Say hello!
-            </p>
-          </div>
-        ) : (
-          /* Still loading initial messages */
-          <div className="flex flex-1 items-center justify-center">
+      {/* Message area - only this section shows loading state */}
+      {!isFetched ? (
+        /* Loading messages for the first time */
+        <div className="flex flex-1 items-center justify-center">
+          <div className="flex flex-col items-center gap-3">
             <Spinner size="lg" />
+            <p className="text-sm text-text-tertiary">Loading messages...</p>
           </div>
-        )
+        </div>
+      ) : messages.length === 0 ? (
+        /* Empty conversation — ready for the first message */
+        <div className="flex flex-1 flex-col items-center justify-center gap-3 px-6">
+          <div className="flex h-16 w-16 items-center justify-center rounded-full bg-bg-tertiary/60">
+            <svg
+              viewBox="0 0 24 24"
+              className="h-7 w-7 text-text-tertiary"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.5"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+            </svg>
+          </div>
+          <p className="text-sm text-text-tertiary">
+            No messages yet. Say hello!
+          </p>
+        </div>
       ) : (
+        /* Messages loaded - show thread */
         <MessageThread
           messages={messages}
           currentUserId={user.id}
@@ -131,6 +133,7 @@ export function ConversationView({
       )}
 
       {/* Floating overlay layer — pointer-events-none so messages scroll through */}
+      {/* These are ALWAYS visible, regardless of message loading state */}
       <div className="pointer-events-none absolute inset-0 z-10">
         {/* Header — fades from bg to transparent */}
         <ConversationHeader
@@ -151,13 +154,35 @@ export function ConversationView({
         <MessageInput onSend={handleSend} onTyping={handleTyping} />
       </div>
 
-      {/* Connection status banner */}
-      {!isConnected && messages.length > 0 && (
+      {/* Connection status banner - only show after delay and retry attempts */}
+      {connectionState === "reconnecting" && (
         <div className="absolute top-20 left-1/2 -translate-x-1/2 z-30">
           <div className="flex items-center gap-2 rounded-full glass px-3 py-1.5 shadow-lg">
             <Spinner size="sm" />
             <span className="text-xs font-medium text-text-secondary">
               Reconnecting...
+            </span>
+          </div>
+        </div>
+      )}
+      {connectionState === "failed" && (
+        <div className="absolute top-20 left-1/2 -translate-x-1/2 z-30">
+          <div className="flex items-center gap-2 rounded-full glass px-3 py-1.5 shadow-lg border border-red-500/20">
+            <svg
+              viewBox="0 0 24 24"
+              className="h-4 w-4 text-red-500"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <circle cx="12" cy="12" r="10" />
+              <line x1="12" y1="8" x2="12" y2="12" />
+              <line x1="12" y1="16" x2="12.01" y2="16" />
+            </svg>
+            <span className="text-xs font-medium text-red-500">
+              Connection lost. Please refresh.
             </span>
           </div>
         </div>

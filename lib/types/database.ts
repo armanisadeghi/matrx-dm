@@ -61,6 +61,117 @@ export type Database = {
           },
         ]
       }
+      contacts: {
+        Row: {
+          address_home: Json | null
+          address_work: Json | null
+          anniversary: string | null
+          birthday: string | null
+          company: string | null
+          contact_user_id: string
+          created_at: string | null
+          custom_avatar_url: string | null
+          custom_dates: Json | null
+          custom_name: string | null
+          department: string | null
+          email_other: string | null
+          email_personal: string | null
+          email_work: string | null
+          id: string
+          is_favorite: boolean | null
+          job_title: string | null
+          nickname: string | null
+          notes: string | null
+          owner_id: string
+          phone_home: string | null
+          phone_mobile: string | null
+          phone_other: string | null
+          phone_work: string | null
+          relationship: string | null
+          social_media: Json | null
+          tags: string[] | null
+          updated_at: string | null
+          websites: string[] | null
+        }
+        Insert: {
+          address_home?: Json | null
+          address_work?: Json | null
+          anniversary?: string | null
+          birthday?: string | null
+          company?: string | null
+          contact_user_id: string
+          created_at?: string | null
+          custom_avatar_url?: string | null
+          custom_dates?: Json | null
+          custom_name?: string | null
+          department?: string | null
+          email_other?: string | null
+          email_personal?: string | null
+          email_work?: string | null
+          id?: string
+          is_favorite?: boolean | null
+          job_title?: string | null
+          nickname?: string | null
+          notes?: string | null
+          owner_id: string
+          phone_home?: string | null
+          phone_mobile?: string | null
+          phone_other?: string | null
+          phone_work?: string | null
+          relationship?: string | null
+          social_media?: Json | null
+          tags?: string[] | null
+          updated_at?: string | null
+          websites?: string[] | null
+        }
+        Update: {
+          address_home?: Json | null
+          address_work?: Json | null
+          anniversary?: string | null
+          birthday?: string | null
+          company?: string | null
+          contact_user_id?: string
+          created_at?: string | null
+          custom_avatar_url?: string | null
+          custom_dates?: Json | null
+          custom_name?: string | null
+          department?: string | null
+          email_other?: string | null
+          email_personal?: string | null
+          email_work?: string | null
+          id?: string
+          is_favorite?: boolean | null
+          job_title?: string | null
+          nickname?: string | null
+          notes?: string | null
+          owner_id?: string
+          phone_home?: string | null
+          phone_mobile?: string | null
+          phone_other?: string | null
+          phone_work?: string | null
+          relationship?: string | null
+          social_media?: Json | null
+          tags?: string[] | null
+          updated_at?: string | null
+          websites?: string[] | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "contacts_contact_user_id_fkey"
+            columns: ["contact_user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "contacts_owner_id_fkey"
+            columns: ["owner_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       conversation_participants: {
         Row: {
           conversation_id: string
@@ -69,6 +180,7 @@ export type Database = {
           is_pinned: boolean
           joined_at: string
           last_read_message_id: string | null
+          pinned_at: string | null
           role: string
           user_id: string
         }
@@ -79,6 +191,7 @@ export type Database = {
           is_pinned?: boolean
           joined_at?: string
           last_read_message_id?: string | null
+          pinned_at?: string | null
           role?: string
           user_id: string
         }
@@ -89,6 +202,7 @@ export type Database = {
           is_pinned?: boolean
           joined_at?: string
           last_read_message_id?: string | null
+          pinned_at?: string | null
           role?: string
           user_id?: string
         }
@@ -287,6 +401,80 @@ export type Database = {
         }
         Relationships: []
       }
+      user_profiles: {
+        Row: {
+          bio: string | null
+          birthday: string | null
+          company: string | null
+          created_at: string | null
+          email_primary: string | null
+          email_work: string | null
+          github_handle: string | null
+          id: string
+          linkedin_url: string | null
+          location: string | null
+          phone_primary: string | null
+          phone_work: string | null
+          show_birthday: boolean | null
+          show_email: boolean | null
+          show_phone: boolean | null
+          title: string | null
+          twitter_handle: string | null
+          updated_at: string | null
+          website: string | null
+        }
+        Insert: {
+          bio?: string | null
+          birthday?: string | null
+          company?: string | null
+          created_at?: string | null
+          email_primary?: string | null
+          email_work?: string | null
+          github_handle?: string | null
+          id: string
+          linkedin_url?: string | null
+          location?: string | null
+          phone_primary?: string | null
+          phone_work?: string | null
+          show_birthday?: boolean | null
+          show_email?: boolean | null
+          show_phone?: boolean | null
+          title?: string | null
+          twitter_handle?: string | null
+          updated_at?: string | null
+          website?: string | null
+        }
+        Update: {
+          bio?: string | null
+          birthday?: string | null
+          company?: string | null
+          created_at?: string | null
+          email_primary?: string | null
+          email_work?: string | null
+          github_handle?: string | null
+          id?: string
+          linkedin_url?: string | null
+          location?: string | null
+          phone_primary?: string | null
+          phone_work?: string | null
+          show_birthday?: boolean | null
+          show_email?: boolean | null
+          show_phone?: boolean | null
+          title?: string | null
+          twitter_handle?: string | null
+          updated_at?: string | null
+          website?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "user_profiles_id_fkey"
+            columns: ["id"]
+            isOneToOne: true
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
     }
     Views: {
       [_ in never]: never
@@ -315,6 +503,7 @@ export type Database = {
           unread_count: number
         }[]
       }
+      get_my_conversation_ids: { Args: never; Returns: string[] }
       get_or_create_direct_conversation: {
         Args: { p_other_user_id: string }
         Returns: string

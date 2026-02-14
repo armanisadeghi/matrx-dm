@@ -4,13 +4,14 @@ import { cn } from "@/lib/cn";
 import { getInitials, getAvatarColor } from "@/lib/utils/format";
 import { useState } from "react";
 
-type AvatarSize = "xs" | "sm" | "md" | "lg";
+type AvatarSize = "xs" | "sm" | "md" | "lg" | "xl";
 
 const sizeMap: Record<AvatarSize, { container: string; text: string; dot: string }> = {
   xs: { container: "h-6 w-6", text: "text-[8px]", dot: "h-2 w-2 -right-0 -bottom-0" },
   sm: { container: "h-8 w-8", text: "text-xs", dot: "h-2.5 w-2.5 -right-0.5 -bottom-0.5" },
   md: { container: "h-10 w-10", text: "text-sm", dot: "h-3 w-3 -right-0.5 -bottom-0.5" },
   lg: { container: "h-14 w-14", text: "text-base", dot: "h-3.5 w-3.5 -right-0.5 -bottom-0.5" },
+  xl: { container: "h-20 w-20", text: "text-lg", dot: "h-4 w-4 -right-1 -bottom-1" },
 };
 
 type AvatarProps = {

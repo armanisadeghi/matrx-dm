@@ -8,6 +8,7 @@ import { SearchBar } from "./SearchBar";
 import { Avatar, IconButton } from "@/components/ui";
 import { ConversationListItem } from "@/components/messaging/ConversationListItem";
 import { NewConversationSheet } from "@/components/messaging/NewConversationSheet";
+import { GroupManagementSheet } from "@/components/messaging/GroupManagementSheet";
 import {
   ContextMenu,
   useContextMenu,
@@ -19,6 +20,9 @@ import {
   MailOpen,
   Trash2,
   ExternalLink,
+  Settings,
+  Users,
+  UserCircle,
 } from "lucide-react";
 import type { ConversationWithDetails, ConversationFilter } from "@/lib/types";
 import {
@@ -44,6 +48,8 @@ export function Sidebar({ conversations, className }: SidebarProps) {
   const [filter, setFilter] = useState<ConversationFilter>("all");
   const [newConvOpen, setNewConvOpen] = useState(false);
   const [filterMenuOpen, setFilterMenuOpen] = useState(false);
+  const [groupSettingsOpen, setGroupSettingsOpen] = useState(false);
+  const [selectedGroupForSettings, setSelectedGroupForSettings] = useState<ConversationWithDetails | null>(null);
   const filterMenuRef = useRef<HTMLDivElement>(null);
   const router = useRouter();
   const params = useParams();
@@ -152,7 +158,7 @@ export function Sidebar({ conversations, className }: SidebarProps) {
   function getContextMenuSections(
     conv: ConversationWithDetails
   ): ContextMenuSection[] {
-    return [
+    const sections: ContextMenuSection[] = [
       {
         items: [
           {
@@ -174,6 +180,40 @@ export function Sidebar({ conversations, className }: SidebarProps) {
           },
         ],
       },
+    ];
+
+    // Add Group Settings option for groups only
+    if (conv.conversation_type === "group") {
+      sections.push({
+        items: [
+          {
+            label: "Group Settings",
+            icon: Settings,
+            onClick: () => {
+              setSelectedGroupForSettings(conv);
+              setGroupSettingsOpen(true);
+            },
+          },
+        ],
+      });
+    }
+
+    // Add View Contact option for direct conversations
+    if (conv.conversation_type === "direct") {
+      sections.push({
+        items: [
+          {
+            label: "View Contact",
+            icon: UserCircle,
+            onClick: () => {
+              router.push("/contacts");
+            },
+          },
+        ],
+      });
+    }
+
+    sections.push(
       {
         items: [
           {
@@ -194,8 +234,10 @@ export function Sidebar({ conversations, className }: SidebarProps) {
             onClick: () => handleDelete(conv.conversation_id),
           },
         ],
-      },
-    ];
+      }
+    );
+
+    return sections;
   }
 
   return (
@@ -302,8 +344,8 @@ export function Sidebar({ conversations, className }: SidebarProps) {
 
       {/* Conversation list */}
       <div className="flex-1 overflow-y-auto scrollbar-hide px-2">
-        {/* All conversations (unpinned shown here, pinned already shown as avatars) */}
-        {unpinned.map((c) => (
+        {/* Show pinned conversations beyond the first 3 (4th, 5th, etc.) */}
+        {pinned.slice(3).map((c) => (
           <ConversationListItem
             key={c.conversation_id}
             conversation={c}
@@ -315,8 +357,8 @@ export function Sidebar({ conversations, className }: SidebarProps) {
           />
         ))}
 
-        {/* Also show pinned ones with more than 3 in the list */}
-        {pinned.slice(3).map((c) => (
+        {/* Then show all unpinned conversations */}
+        {unpinned.map((c) => (
           <ConversationListItem
             key={c.conversation_id}
             conversation={c}
@@ -353,6 +395,48 @@ export function Sidebar({ conversations, className }: SidebarProps) {
         open={newConvOpen}
         onClose={() => setNewConvOpen(false)}
       />
+
+      {/* Group management sheet */}
+      {selectedGroupForSettings && (
+        <GroupManagementSheet
+          open={groupSettingsOpen}
+          onClose={() => {
+            setGroupSettingsOpen(false);
+            setSelectedGroupForSettings(null);
+          }}
+          conversationId={selectedGroupForSettings.conversation_id}
+          conversationName={selectedGroupForSettings.conversation_name || "Group"}
+          conversationAvatar={selectedGroupForSettings.conversation_avatar_url}
+        />
+      )}
+
+      {/* Bottom navigation */}
+      <div className="border-t border-border-subtle px-2 py-2 safe-bottom">
+        <button
+          type="button"
+          onClick={() => router.push("/contacts")}
+          className={cn(
+            "flex w-full items-center gap-3 rounded-xl px-3 py-2.5",
+            "text-left transition-colors",
+            "text-text-secondary hover:bg-bg-tertiary/50 hover:text-text-primary"
+          )}
+        >
+          <Users size={18} strokeWidth={1.5} />
+          <span className="text-sm font-medium">Contacts</span>
+        </button>
+        <button
+          type="button"
+          onClick={() => router.push("/settings")}
+          className={cn(
+            "flex w-full items-center gap-3 rounded-xl px-3 py-2.5",
+            "text-left transition-colors",
+            "text-text-secondary hover:bg-bg-tertiary/50 hover:text-text-primary"
+          )}
+        >
+          <Settings size={18} strokeWidth={1.5} />
+          <span className="text-sm font-medium">Settings</span>
+        </button>
+      </div>
     </aside>
   );
 }

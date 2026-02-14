@@ -30,15 +30,16 @@ export async function updateSession(request: NextRequest) {
   );
 
   // Do not run code between createServerClient and
-  // supabase.auth.getUser(). A simple mistake could make it very hard to
+  // supabase.auth.getClaims(). A simple mistake could make it very hard to
   // debug issues with users being randomly logged out.
 
+  // Use getClaims() instead of getUser() for proper JWT validation
   const {
-    data: { user },
-  } = await supabase.auth.getUser();
+    data: claims,
+  } = await supabase.auth.getClaims();
 
   if (
-    !user &&
+    !claims &&
     !request.nextUrl.pathname.startsWith("/login") &&
     !request.nextUrl.pathname.startsWith("/auth") &&
     !request.nextUrl.pathname.startsWith("/api/auth")
