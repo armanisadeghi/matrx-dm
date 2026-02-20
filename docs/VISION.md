@@ -5,6 +5,8 @@ AI MATRX
 
 UI/UX Design & Development Standards
 
+> **Official Next.js/React best practices:** `~/.arman/rules/nextjs-best-practices/nextjs-guide.md` — Sections 14-15 cover component contracts, accessibility, and design system patterns. This document provides the project-specific design vision.
+
 *Every pixel has a purpose. Every interaction tells a story. Every component earns its place. This is not a messaging app — it is the standard by which all others will be measured.*
 
 Version 1.0
