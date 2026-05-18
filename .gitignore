@@ -49,3 +49,7 @@ next-env.d.ts
 .matrx.json
 .matrx-tools.conf
 .env-backups/
+
+# macOS Finder metadata
+.DS_Store
+**/.DS_Store
